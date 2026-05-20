@@ -1,4 +1,5 @@
 import React, { createContext, useState } from 'react';
+import { connectionAPI } from '../config/configApi';
 
 export const DBClientContext = createContext();
 
@@ -16,7 +17,14 @@ WHERE carne = 'B12345';
   const [activeTab, setActiveTab] = useState('Resultados');
   const [sessionActive, setSessionActive] = useState(true);
 
-  const [connections] = useState([
+  // Modal and connection management state
+  const [showConnectionModal, setShowConnectionModal] = useState(false);
+  const [isLoadingConnection, setIsLoadingConnection] = useState(false);
+  const [connectionError, setConnectionError] = useState(null);
+  const [editingConnection, setEditingConnection] = useState(null);
+
+  // The conections with the nodes will be asked on the backend here, but for now we will hardcode them
+  const [connections, setConnections] = useState([
     {
       id: 'pg',
       name: 'PostgreSQL',
@@ -51,6 +59,8 @@ WHERE carne = 'B12345';
     },
   ]);
 
+  // The transactions will be asked on the backend here, but for now we will hardcode them
+  // BITACORA
   const [transactions] = useState([
     {
       id: 'TXN-0042',
@@ -69,6 +79,8 @@ WHERE carne = 'B12345';
     },
   ]);
 
+  // The results and the wal entries will be asked on the backend here, but for now we will hardcode them
+  // BITACORA
   const [resultsData] = useState([
     {
       carne: 'B12345',
@@ -78,6 +90,7 @@ WHERE carne = 'B12345';
     },
   ]);
 
+  // BITACORA
   const [walEntries] = useState([
     {
       tid: '0043',
@@ -97,6 +110,74 @@ WHERE carne = 'B12345';
     },
   ]);
 
+  // Connection management functions
+  const addConnection = async (connectionData) => {
+    setIsLoadingConnection(true);
+    setConnectionError(null);
+    try {
+      const newConnection = await connectionAPI.createConnection(connectionData);
+      // Add the new connection to the local state
+      setConnections([...connections, newConnection]);
+      setShowConnectionModal(false);
+      setEditingConnection(null);
+    } catch (error) {
+      setConnectionError(error.message);
+      console.error('Error adding connection:', error);
+    } finally {
+      setIsLoadingConnection(false);
+    }
+  };
+
+  const disconnectConnection = async (connectionId) => {
+    setIsLoadingConnection(true);
+    setConnectionError(null);
+    try {
+      const updatedConnection = await connectionAPI.disconnectConnection(connectionId);
+      // Update the connection status in local state
+      setConnections(
+        connections.map((conn) =>
+          conn.id === connectionId ? updatedConnection : conn
+        )
+      );
+
+      // If the disconnected connection was active, switch to another
+      if (activeEngine === connectionId) {
+        const availableConnection = connections.find((conn) => conn.id !== connectionId);
+        if (availableConnection) {
+          setActiveEngine(availableConnection.name);
+        }
+      }
+    } catch (error) {
+      setConnectionError(error.message);
+      console.error('Error disconnecting connection:', error);
+    } finally {
+      setIsLoadingConnection(false);
+    }
+  };
+
+  const deleteConnection = async (connectionId) => {
+    setIsLoadingConnection(true);
+    setConnectionError(null);
+    try {
+      await connectionAPI.deleteConnection(connectionId);
+      // Remove the connection from local state
+      setConnections(connections.filter((conn) => conn.id !== connectionId));
+
+      // If the deleted connection was active, switch to another
+      if (activeEngine === connectionId) {
+        const availableConnection = connections.find((conn) => conn.id !== connectionId);
+        if (availableConnection) {
+          setActiveEngine(availableConnection.name);
+        }
+      }
+    } catch (error) {
+      setConnectionError(error.message);
+      console.error('Error deleting connection:', error);
+    } finally {
+      setIsLoadingConnection(false);
+    }
+  };
+
   const value = {
     activeEngine,
     setActiveEngine,
@@ -111,6 +192,16 @@ WHERE carne = 'B12345';
     sessionActive,
     setSessionActive,
     connections,
+    setConnections,
+    showConnectionModal,
+    setShowConnectionModal,
+    isLoadingConnection,
+    connectionError,
+    editingConnection,
+    setEditingConnection,
+    addConnection,
+    disconnectConnection,
+    deleteConnection,
     transactions,
     resultsData,
     walEntries,
