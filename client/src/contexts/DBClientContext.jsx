@@ -1,128 +1,105 @@
-import React, { createContext, useState } from 'react';
-import { connectionAPI } from '../config/configApi';
+import React, { createContext, useState, useEffect, useCallback } from 'react';
+import {
+  connectionAPI,
+  queryAPI,
+  transactionAPI,
+  walAPI,
+  recoveryAPI,
+  healthAPI,
+} from '../config/configApi';
 
 export const DBClientContext = createContext();
 
 export function DBClientProvider({ children }) {
-  const [activeEngine, setActiveEngine] = useState('PostgreSQL');
-  const [activeTransaction, setActiveTransaction] = useState('TXN-0043');
+  const [activeEngine, setActiveEngine] = useState(null);
+  const [activeConnectionId, setActiveConnectionId] = useState(null);
+  const [activeTransaction, setActiveTransaction] = useState(null);
   const [recoveryProtocol, setRecoveryProtocol] = useState('No-Undo/Redo');
   const [queryContent, setQueryContent] = useState(
-    `BEGIN;
-UPDATE estudiantes
-SET nota = 95
-WHERE carne = 'B12345';
--- COMMIT / ROLLBACK`
+    `BEGIN;\nUPDATE students\nSET grade = 95\nWHERE id = 1;\n-- Click COMMIT or ROLLBACK`
   );
   const [activeTab, setActiveTab] = useState('Resultados');
   const [sessionActive, setSessionActive] = useState(true);
 
-  // Modal and connection management state
+  const [connections, setConnections] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [resultsData, setResultsData] = useState([]);
+  const [resultsColumns, setResultsColumns] = useState([]);
+  const [walEntries, setWalEntries] = useState([]);
+  const [consoleLog, setConsoleLog] = useState([]);
+  const [recoveryResult, setRecoveryResult] = useState(null);
+  const [health, setHealth] = useState(null);
+
   const [showConnectionModal, setShowConnectionModal] = useState(false);
   const [isLoadingConnection, setIsLoadingConnection] = useState(false);
   const [connectionError, setConnectionError] = useState(null);
   const [editingConnection, setEditingConnection] = useState(null);
 
-  // The conections with the nodes will be asked on the backend here, but for now we will hardcode them
-  const [connections, setConnections] = useState([
-    {
-      id: 'pg',
-      name: 'PostgreSQL',
-      status: 'connected',
-      color: 'green',
-      address: 'localhost:5432',
-      node: 'nodo-1',
-    },
-    {
-      id: 'mongo',
-      name: 'MongoDB',
-      status: 'connected',
-      color: 'green',
-      address: 'localhost:27017',
-      node: 'nodo-2',
-    },
-    {
-      id: 'mysql',
-      name: 'MySQL',
-      status: 'desconectado',
-      color: 'gray',
-      address: '192.168.1.5',
-      node: '',
-    },
-    {
-      id: 'redis',
-      name: 'Redis',
-      status: 'error',
-      color: 'red',
-      address: 'localhost:6379',
-      node: '',
-    },
-  ]);
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [queryError, setQueryError] = useState(null);
 
-  // The transactions will be asked on the backend here, but for now we will hardcode them
-  // BITACORA
-  const [transactions] = useState([
-    {
-      id: 'TXN-0042',
-      status: 'COMMIT',
-      badge: 'green',
-    },
-    {
-      id: 'TXN-0043',
-      status: 'ACTIVA',
-      badge: 'orange',
-    },
-    {
-      id: 'TXN-0041',
-      status: 'ABORT',
-      badge: 'gray',
-    },
-  ]);
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
-  // The results and the wal entries will be asked on the backend here, but for now we will hardcode them
-  // BITACORA
-  const [resultsData] = useState([
-    {
-      carne: 'B12345',
-      nombre: 'Fernández López, Ana',
-      nota_ant: 88,
-      nota_nueva: 95,
-    },
-  ]);
+  const appendLog = (msg) =>
+    setConsoleLog((prev) => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 100));
 
-  // BITACORA
-  const [walEntries] = useState([
-    {
-      tid: '0043',
-      op: 'BEGIN',
-      tabla: '-',
-      before: '-',
-      after: '-',
-      timestamp: '2026-05-11 14:22:00',
-    },
-    {
-      tid: '0043',
-      op: 'UPDATE',
-      tabla: 'estudiantes',
-      before: "{'nota': 88, 'carne': 'B12345'}",
-      after: "{'nota': 95, 'carne': 'B12345'}",
-      timestamp: '2026-05-11 14:22:05',
-    },
-  ]);
+  const refreshTransactions = useCallback(async () => {
+    try {
+      const data = await transactionAPI.getTransactions();
+      setTransactions(data);
+    } catch (_) {}
+  }, []);
 
-  // Connection management functions
+  const refreshWal = useCallback(async () => {
+    try {
+      const data = await walAPI.getAllWalEntries({});
+      setWalEntries(data);
+    } catch (_) {}
+  }, []);
+
+  const refreshHealth = useCallback(async () => {
+    try {
+      const data = await healthAPI.getHealth();
+      setHealth(data);
+    } catch (_) {}
+  }, []);
+
+  // ── Boot: load connections + health ───────────────────────────────────────
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const conns = await connectionAPI.getConnections();
+        setConnections(conns);
+        const first = conns.find((c) => c.status === 'connected');
+        if (first) {
+          setActiveEngine(first.name);
+          setActiveConnectionId(first.id);
+        }
+      } catch (_) {}
+      refreshTransactions();
+      refreshWal();
+      refreshHealth();
+    })();
+  }, []);
+
+  // ── Connection management ─────────────────────────────────────────────────
+
   const addConnection = async (connectionData) => {
     setIsLoadingConnection(true);
     setConnectionError(null);
     try {
-      const newConnection = await connectionAPI.createConnection(connectionData);
-      // Add the new connection to the local state
-      setConnections([...connections, newConnection]);
+      const newConn = await connectionAPI.createConnection(connectionData);
+      setConnections((prev) => [...prev, newConn]);
       setShowConnectionModal(false);
       setEditingConnection(null);
+      if (!activeConnectionId) {
+        setActiveEngine(newConn.name);
+        setActiveConnectionId(newConn.id);
+      }
+      appendLog(`Connected to ${newConn.name} (${newConn.address})`);
     } catch (error) {
       setConnectionError(error.message);
-      console.error('Error adding connection:', error);
     } finally {
       setIsLoadingConnection(false);
     }
@@ -132,24 +109,16 @@ WHERE carne = 'B12345';
     setIsLoadingConnection(true);
     setConnectionError(null);
     try {
-      const updatedConnection = await connectionAPI.disconnectConnection(connectionId);
-      // Update the connection status in local state
-      setConnections(
-        connections.map((conn) =>
-          conn.id === connectionId ? updatedConnection : conn
-        )
-      );
-
-      // If the disconnected connection was active, switch to another
-      if (activeEngine === connectionId) {
-        const availableConnection = connections.find((conn) => conn.id !== connectionId);
-        if (availableConnection) {
-          setActiveEngine(availableConnection.name);
-        }
+      const updated = await connectionAPI.disconnectConnection(connectionId);
+      setConnections((prev) => prev.map((c) => (c.id === connectionId ? updated : c)));
+      if (activeConnectionId === connectionId) {
+        const next = connections.find((c) => c.id !== connectionId && c.status === 'connected');
+        setActiveEngine(next?.name ?? null);
+        setActiveConnectionId(next?.id ?? null);
       }
+      appendLog(`Disconnected from ${updated.name}`);
     } catch (error) {
       setConnectionError(error.message);
-      console.error('Error disconnecting connection:', error);
     } finally {
       setIsLoadingConnection(false);
     }
@@ -160,51 +129,158 @@ WHERE carne = 'B12345';
     setConnectionError(null);
     try {
       await connectionAPI.deleteConnection(connectionId);
-      // Remove the connection from local state
-      setConnections(connections.filter((conn) => conn.id !== connectionId));
-
-      // If the deleted connection was active, switch to another
-      if (activeEngine === connectionId) {
-        const availableConnection = connections.find((conn) => conn.id !== connectionId);
-        if (availableConnection) {
-          setActiveEngine(availableConnection.name);
-        }
+      setConnections((prev) => prev.filter((c) => c.id !== connectionId));
+      if (activeConnectionId === connectionId) {
+        const next = connections.find((c) => c.id !== connectionId && c.status === 'connected');
+        setActiveEngine(next?.name ?? null);
+        setActiveConnectionId(next?.id ?? null);
       }
+      appendLog(`Deleted connection`);
     } catch (error) {
       setConnectionError(error.message);
-      console.error('Error deleting connection:', error);
     } finally {
       setIsLoadingConnection(false);
     }
   };
 
+  const selectConnection = (conn) => {
+    setActiveEngine(conn.name);
+    setActiveConnectionId(conn.id);
+  };
+
+  // ── Query execution ───────────────────────────────────────────────────────
+
+  const executeQuery = async () => {
+    if (!activeConnectionId) {
+      setQueryError('No active connection. Add one in the sidebar.');
+      return;
+    }
+    setIsExecuting(true);
+    setQueryError(null);
+    try {
+      const result = await queryAPI.executeQuery(
+        activeConnectionId,
+        queryContent,
+        recoveryProtocol,
+        activeTransaction
+      );
+      setResultsData(result.results || []);
+      setResultsColumns(result.columns || []);
+      if (result.txn_id) setActiveTransaction(result.txn_id);
+      appendLog(
+        result.message ||
+          `Query OK — ${result.rowsAffected} row(s) affected`
+      );
+      setActiveTab('Resultados');
+      await refreshTransactions();
+      await refreshWal();
+      await refreshHealth();
+    } catch (error) {
+      setQueryError(error.message);
+      appendLog(`ERROR: ${error.message}`);
+      setActiveTab('Consola');
+    } finally {
+      setIsExecuting(false);
+    }
+  };
+
+  // ── Transaction controls ──────────────────────────────────────────────────
+
+  const commitTransaction = async () => {
+    if (!activeTransaction) return;
+    try {
+      await transactionAPI.commitTransaction(activeTransaction);
+      appendLog(`Transaction ${activeTransaction} committed`);
+      setActiveTransaction(null);
+      await refreshTransactions();
+      await refreshWal();
+    } catch (error) {
+      appendLog(`COMMIT ERROR: ${error.message}`);
+    }
+  };
+
+  const rollbackTransaction = async () => {
+    if (!activeTransaction) return;
+    try {
+      await transactionAPI.rollbackTransaction(activeTransaction);
+      appendLog(`Transaction ${activeTransaction} rolled back`);
+      setActiveTransaction(null);
+      await refreshTransactions();
+      await refreshWal();
+    } catch (error) {
+      appendLog(`ROLLBACK ERROR: ${error.message}`);
+    }
+  };
+
+  // ── Recovery ──────────────────────────────────────────────────────────────
+
+  const simulateFailure = async () => {
+    if (!activeTransaction) {
+      appendLog('No active transaction to simulate failure on.');
+      return;
+    }
+    try {
+      const result = await recoveryAPI.simulateFailure(activeTransaction);
+      appendLog(`Failure simulated on ${result.tid}`);
+      setActiveTransaction(null);
+      await refreshTransactions();
+      setActiveTab('Recuperación');
+    } catch (error) {
+      appendLog(`SIMULATE FAILURE ERROR: ${error.message}`);
+    }
+  };
+
+  const runRecovery = async (tid, protocol) => {
+    try {
+      const result = await recoveryAPI.runRecovery(tid, protocol || recoveryProtocol);
+      setRecoveryResult(result);
+      appendLog(`Recovery (${result.protocol}) on ${tid}: ${result.after_state}`);
+      await refreshTransactions();
+      await refreshWal();
+      setActiveTab('Recuperación');
+    } catch (error) {
+      appendLog(`RECOVERY ERROR: ${error.message}`);
+    }
+  };
+
   const value = {
-    activeEngine,
-    setActiveEngine,
-    activeTransaction,
-    setActiveTransaction,
-    recoveryProtocol,
-    setRecoveryProtocol,
-    queryContent,
-    setQueryContent,
-    activeTab,
-    setActiveTab,
-    sessionActive,
-    setSessionActive,
-    connections,
-    setConnections,
-    showConnectionModal,
-    setShowConnectionModal,
+    // Connection state
+    activeEngine, setActiveEngine,
+    activeConnectionId, setActiveConnectionId,
+    connections, setConnections,
+    selectConnection,
+    showConnectionModal, setShowConnectionModal,
     isLoadingConnection,
     connectionError,
-    editingConnection,
-    setEditingConnection,
-    addConnection,
-    disconnectConnection,
-    deleteConnection,
+    editingConnection, setEditingConnection,
+    addConnection, disconnectConnection, deleteConnection,
+
+    // Transaction state
+    activeTransaction, setActiveTransaction,
     transactions,
-    resultsData,
+    recoveryProtocol, setRecoveryProtocol,
+    commitTransaction, rollbackTransaction,
+
+    // Query state
+    queryContent, setQueryContent,
+    resultsData, resultsColumns,
+    isExecuting, queryError,
+    executeQuery,
+
+    // WAL
     walEntries,
+
+    // Recovery
+    recoveryResult,
+    simulateFailure,
+    runRecovery,
+
+    // UI
+    activeTab, setActiveTab,
+    sessionActive, setSessionActive,
+    consoleLog,
+    health,
+    refreshWal, refreshTransactions, refreshHealth,
   };
 
   return (

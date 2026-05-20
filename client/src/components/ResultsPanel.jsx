@@ -1,11 +1,29 @@
-import React, { useContext } from 'react';
+import React, { useContext, useState } from 'react';
 import { DBClientContext } from '../contexts/DBClientContext';
 
 export function ResultsPanel() {
-  const { activeTab, setActiveTab, resultsData, walEntries, activeTransaction } =
-    useContext(DBClientContext);
+  const {
+    activeTab, setActiveTab,
+    resultsData, resultsColumns,
+    walEntries,
+    transactions,
+    recoveryResult, runRecovery,
+    activeTransaction,
+    consoleLog,
+    recoveryProtocol,
+  } = useContext(DBClientContext);
 
+  const [walFilter, setWalFilter] = useState('');
   const tabs = ['Resultados', 'Bitácora (WAL)', 'Recuperación', 'Consola'];
+
+  const filteredWal = walFilter
+    ? walEntries.filter(
+        (e) =>
+          e.tid.includes(walFilter) ||
+          e.op.toLowerCase().includes(walFilter.toLowerCase()) ||
+          e.tabla.toLowerCase().includes(walFilter.toLowerCase())
+      )
+    : walEntries;
 
   return (
     <div className="bg-white border-t border-gray-200 flex flex-col h-1/3">
@@ -28,107 +46,142 @@ export function ResultsPanel() {
 
       {/* Tab Content */}
       <div className="flex-1 overflow-auto p-4">
+
+        {/* ── RESULTS ── */}
         {activeTab === 'Resultados' && (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-300 bg-gray-100">
-                  <th className="px-4 py-2 text-left font-semibold text-gray-900">
-                    carne
-                  </th>
-                  <th className="px-4 py-2 text-left font-semibold text-gray-900">
-                    nombre
-                  </th>
-                  <th className="px-4 py-2 text-left font-semibold text-gray-900">
-                    nota_ant
-                  </th>
-                  <th className="px-4 py-2 text-left font-semibold text-gray-900">
-                    nota_nueva
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {resultsData.map((row, idx) => (
-                  <tr key={idx} className="border-b border-gray-200 hover:bg-gray-50">
-                    <td className="px-4 py-2 text-gray-900">{row.carne}</td>
-                    <td className="px-4 py-2 text-gray-900">{row.nombre}</td>
-                    <td className="px-4 py-2 text-gray-900">{row.nota_ant}</td>
-                    <td className="px-4 py-2 text-gray-900">{row.nota_nueva}</td>
+            {resultsData.length === 0 ? (
+              <p className="text-gray-400 text-sm italic">No hay resultados aún. Ejecuta una consulta.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-300 bg-gray-100">
+                    {resultsColumns.map((col) => (
+                      <th key={col} className="px-4 py-2 text-left font-semibold text-gray-900">
+                        {col}
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {resultsData.map((row, idx) => (
+                    <tr key={idx} className="border-b border-gray-200 hover:bg-gray-50">
+                      {resultsColumns.map((col) => (
+                        <td key={col} className="px-4 py-2 text-gray-900">
+                          {row[col] === null ? <span className="text-gray-400">NULL</span> : String(row[col])}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         )}
 
+        {/* ── WAL ── */}
         {activeTab === 'Bitácora (WAL)' && (
           <div>
-            <div className="flex gap-2 mb-4">
-              <span className="px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-xs font-medium">
-                Filtrar: {activeTransaction}
-              </span>
-              <span className="px-3 py-1 rounded-full bg-gray-100 text-gray-800 text-xs font-medium">
-                Todas las ops
-              </span>
+            <div className="flex gap-2 mb-3 items-center">
+              <input
+                type="text"
+                placeholder="Filtrar por TID, operación o tabla…"
+                value={walFilter}
+                onChange={(e) => setWalFilter(e.target.value)}
+                className="px-3 py-1 border border-gray-300 rounded text-xs w-64"
+              />
+              <span className="text-xs text-gray-500">{filteredWal.length} entrada(s)</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-300 bg-gray-100">
-                    <th className="px-4 py-2 text-left font-semibold text-gray-900">
-                      TID
-                    </th>
-                    <th className="px-4 py-2 text-left font-semibold text-gray-900">
-                      Op
-                    </th>
-                    <th className="px-4 py-2 text-left font-semibold text-gray-900">
-                      Tabla
-                    </th>
-                    <th className="px-4 py-2 text-left font-semibold text-gray-900">
-                      Before image
-                    </th>
-                    <th className="px-4 py-2 text-left font-semibold text-gray-900">
-                      After image
-                    </th>
-                    <th className="px-4 py-2 text-left font-semibold text-gray-900">
-                      Timestamp
-                    </th>
+                    {['TID', 'Op', 'Tabla', 'Before image', 'After image', 'Timestamp'].map((h) => (
+                      <th key={h} className="px-4 py-2 text-left font-semibold text-gray-900">{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {walEntries.map((entry, idx) => (
+                  {filteredWal.map((entry, idx) => (
                     <tr key={idx} className="border-b border-gray-200 hover:bg-gray-50">
-                      <td className="px-4 py-2 text-gray-900 font-mono">
-                        {entry.tid}
+                      <td className="px-4 py-2 text-gray-900 font-mono">{entry.tid}</td>
+                      <td className="px-4 py-2">
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${
+                          entry.op === 'COMMIT' ? 'bg-green-100 text-green-800' :
+                          entry.op === 'ABORT'  ? 'bg-red-100 text-red-800' :
+                          entry.op === 'BEGIN'  ? 'bg-blue-100 text-blue-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>{entry.op}</span>
                       </td>
-                      <td className="px-4 py-2 text-gray-900">{entry.op}</td>
                       <td className="px-4 py-2 text-gray-900">{entry.tabla}</td>
-                      <td className="px-4 py-2 text-gray-600 text-xs font-mono">
-                        {entry.before}
-                      </td>
-                      <td className="px-4 py-2 text-gray-600 text-xs font-mono">
-                        {entry.after}
-                      </td>
-                      <td className="px-4 py-2 text-gray-600 text-xs">
-                        {entry.timestamp}
-                      </td>
+                      <td className="px-4 py-2 text-gray-600 text-xs font-mono max-w-xs truncate">{entry.before}</td>
+                      <td className="px-4 py-2 text-gray-600 text-xs font-mono max-w-xs truncate">{entry.after}</td>
+                      <td className="px-4 py-2 text-gray-600 text-xs">{entry.timestamp?.slice(0, 19)}</td>
                     </tr>
                   ))}
+                  {filteredWal.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="text-center py-6 text-gray-400 text-sm italic">
+                        No hay entradas en la bitácora.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
           </div>
         )}
 
+        {/* ── RECOVERY ── */}
         {activeTab === 'Recuperación' && (
-          <div className="text-center py-8 text-gray-500">
-            <p>Funcionalidad de recuperación disponible próximamente</p>
+          <div className="space-y-4">
+            {/* Run recovery on a past transaction */}
+            <div className="flex gap-3 items-center">
+              <span className="text-sm text-gray-700 font-medium">Ejecutar recuperación:</span>
+              {transactions.filter((t) => ['FAILED', 'ABORTED', 'COMMITTED'].includes(t.status)).slice(0, 5).map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => runRecovery(t.id, recoveryProtocol)}
+                  className="px-3 py-1 text-xs font-medium border border-blue-400 text-blue-600 rounded hover:bg-blue-50 transition-colors"
+                >
+                  {t.id} ({t.status})
+                </button>
+              ))}
+              {transactions.filter((t) => ['FAILED', 'ABORTED', 'COMMITTED'].includes(t.status)).length === 0 && (
+                <span className="text-xs text-gray-400 italic">Sin transacciones para recuperar. Simula un fallo primero.</span>
+              )}
+            </div>
+
+            {/* Recovery result */}
+            {recoveryResult && (
+              <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                <div className="flex gap-4 text-xs text-gray-600 mb-3">
+                  <span><strong>TID:</strong> {recoveryResult.tid}</span>
+                  <span><strong>Protocolo:</strong> {recoveryResult.protocol}</span>
+                  <span><strong>Estado:</strong>{' '}
+                    <span className="text-green-700 font-semibold">{recoveryResult.status}</span>
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mb-1"><strong>Antes:</strong> {recoveryResult.before_state}</p>
+                <p className="text-xs text-gray-500 mb-3"><strong>Después:</strong> {recoveryResult.after_state}</p>
+                <div className="bg-gray-900 text-green-400 rounded p-3 font-mono text-xs space-y-1 max-h-48 overflow-y-auto">
+                  {recoveryResult.recovery_actions.map((action, i) => (
+                    <div key={i}>{action}</div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
+        {/* ── CONSOLE ── */}
         {activeTab === 'Consola' && (
-          <div className="text-center py-8 text-gray-500">
-            <p>Consola disponible próximamente</p>
+          <div className="bg-gray-900 text-green-400 rounded p-3 font-mono text-xs space-y-1 h-full overflow-y-auto">
+            {consoleLog.length === 0 ? (
+              <span className="text-gray-500">La consola está vacía.</span>
+            ) : (
+              consoleLog.map((line, i) => <div key={i}>{line}</div>)
+            )}
           </div>
         )}
       </div>
