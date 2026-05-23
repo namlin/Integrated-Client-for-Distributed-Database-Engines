@@ -25,34 +25,34 @@ Sistema cliente unificado que se conecta simultáneamente a múltiples motores d
 ## Arquitectura general
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     Navegador                           │
-│   React + Vite + Tailwind CSS  (puerto 5173)           │
-│                                                         │
-│  Header ─ Sidebar ─ EditorPanel ─ ResultsPanel         │
-│              │                                          │
-│         DBClientContext  ◄──── fetch/REST ────┐        │
-└────────────────────────────────────────────────┼────────┘
-                                                 │
-┌────────────────────────────────────────────────┼────────┐
+┌──────────────────────────────────────────────────────────┐
+│                     Navegador                            │
+│   React + Vite + Tailwind CSS  (puerto 5173)             │
+│                                                          │
+│  Header ─ Sidebar ─ EditorPanel ─ ResultsPanel           │
+│              │                                           │
+│         DBClientContext  ◄──── fetch/REST ──────┐        │
+└─────────────────────────────────────────────────┼────────┘
+                                                  │
+┌─────────────────────────────────────────────────┼────────┐
 │            FastAPI Backend  (puerto 8000)       │        │
 │                                                 │        │
 │  /api/connections   /api/queries                │        │
 │  /api/transactions  /api/wal                    │        │
 │  /api/recovery      /api/health                 │        │
 │                                                          │
-│  ┌──────────────────────────────────────────┐           │
-│  │           Capa de servicios              │           │
-│  │  DBManager │ WALService │ TxManager      │           │
-│  │  QueryExecutor │ RecoveryService         │           │
-│  └──────────────────────────────────────────┘           │
+│  ┌──────────────────────────────────────────┐            │
+│  │           Capa de servicios              │            │
+│  │  DBManager │ WALService │ TxManager      │            │
+│  │  QueryExecutor │ RecoveryService         │            │
+│  └──────────────────────────────────────────┘            │
 │                                                          │
-│  ┌──────────────────────────────────────────┐           │
-│  │         Adaptadores por motor            │           │
-│  │  PostgreSQL │ MongoDB │ MySQL │ Redis     │           │
-│  └──────────────────────────────────────────┘           │
+│  ┌──────────────────────────────────────────┐            │
+│  │         Adaptadores por motor            │            │
+│  │  PostgreSQL │ MongoDB │ MySQL │ Redis    │            │
+│  └──────────────────────────────────────────┘            │
 │                                                          │
-│  WAL persistido en SQLite  (database/wal.db)            │
+│  WAL persistido en SQLite  (database/wal.db)             │
 └──────────────────────────────────────────────────────────┘
           │           │           │          │
      PostgreSQL   MongoDB      MySQL       Redis
