@@ -1,4 +1,4 @@
-import React, { useContext } from 'react';
+import React, { useContext, useState } from 'react';
 import { DBClientContext } from '../contexts/DBClientContext';
 import { NewConnectionModal } from './NewConnectionModal';
 
@@ -37,9 +37,12 @@ export function Sidebar() {
     transactions,
     setShowConnectionModal,
     disconnectConnection,
+    deleteConnection,
     selectConnection,
     isLoadingConnection,
   } = useContext(DBClientContext);
+
+  const [pendingDeleteConnection, setPendingDeleteConnection] = useState(null);
 
   return (
     <aside className="w-64 bg-gray-50 border-r border-gray-200 flex flex-col overflow-hidden">
@@ -71,7 +74,7 @@ export function Sidebar() {
                     {conn.address}{conn.node ? ` — ${conn.node}` : ''}
                   </div>
                 </button>
-                <div className="border-t border-gray-200 bg-gray-50 p-2">
+                <div className="border-t border-gray-200 bg-gray-50 p-2 space-y-2">
                   <button
                     type="button"
                     onClick={() => disconnectConnection(conn.id)}
@@ -81,6 +84,16 @@ export function Sidebar() {
                     aria-label={`Desconectar ${conn.name}`}
                   >
                     Desconectar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPendingDeleteConnection(conn)}
+                    disabled={isLoadingConnection}
+                    className="w-full rounded-md border border-red-300 bg-white px-3 py-2 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    title={`Eliminar ${conn.name}`}
+                    aria-label={`Eliminar ${conn.name}`}
+                  >
+                    Eliminar
                   </button>
                 </div>
               </div>
@@ -124,6 +137,41 @@ export function Sidebar() {
       </div>
 
       <NewConnectionModal />
+
+      {pendingDeleteConnection && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-bold text-gray-900">Eliminar conexión</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              ¿Seguro que quieres eliminar <span className="font-semibold">{pendingDeleteConnection.name}</span>?
+              Esta acción no se puede deshacer.
+            </p>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setPendingDeleteConnection(null)}
+                disabled={isLoadingConnection}
+                className="flex-1 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const connectionToDelete = pendingDeleteConnection;
+                  setPendingDeleteConnection(null);
+                  await deleteConnection(connectionToDelete.id);
+                }}
+                disabled={isLoadingConnection}
+                className="flex-1 rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
