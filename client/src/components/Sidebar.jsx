@@ -52,17 +52,18 @@ export function Sidebar() {
             {connections.map((conn) => (
               <div
                 key={conn.id}
-                className={`relative rounded-lg transition-colors ${
+                className={`overflow-hidden rounded-lg transition-colors ${
                   activeConnectionId === conn.id
                     ? 'bg-blue-100 border-2 border-blue-400'
                     : 'bg-white border border-gray-200'
                 }`}
               >
                 <button
+                  type="button"
                   onClick={() => selectConnection(conn)}
-                  className="w-full text-left p-3"
+                  className="w-full px-3 py-3 text-left"
                 >
-                  <div className="flex items-start justify-between mb-1">
+                  <div className="flex items-start justify-between gap-2 mb-1">
                     <span className="font-medium text-sm text-gray-900">{conn.name}</span>
                     <ConnectionBadge status={conn.status} color={conn.color} />
                   </div>
@@ -70,14 +71,18 @@ export function Sidebar() {
                     {conn.address}{conn.node ? ` — ${conn.node}` : ''}
                   </div>
                 </button>
-                <button
-                  onClick={() => disconnectConnection(conn.id)}
-                  disabled={isLoadingConnection}
-                  className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors disabled:opacity-50"
-                  title="Desconectar"
-                >
-                  <span className="text-sm font-bold">×</span>
-                </button>
+                <div className="border-t border-gray-200 bg-gray-50 p-2">
+                  <button
+                    type="button"
+                    onClick={() => disconnectConnection(conn.id)}
+                    disabled={isLoadingConnection}
+                    className="w-full rounded-md bg-red-100 px-3 py-2 text-sm font-semibold text-red-700 transition-colors hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    title={`Desconectar ${conn.name}`}
+                    aria-label={`Desconectar ${conn.name}`}
+                  >
+                    Desconectar
+                  </button>
+                </div>
               </div>
             ))}
             {connections.length === 0 && (
