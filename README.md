@@ -62,7 +62,7 @@ Sistema cliente unificado que se conecta simultáneamente a múltiples motores d
 
 ## Requisitos previos
 
-| Herramienta | Versión mínima | Uso |
+| Herramienta | Versión Recomendada | Uso |
 |---|---|---|
 | Python | 3.12 | Backend FastAPI |
 | Node.js | 18 | Frontend React/Vite |
@@ -110,7 +110,7 @@ npm install
 La forma más sencilla de levantar los nodos de bases de datos es usando Docker Compose. Esto permite reproducir el entorno completo sin instalar PostgreSQL ni MongoDB manualmente.
 
 ```bash
-# Desde la raíz del repositorio
+# Desde docker/
 docker compose up -d
 ```
 
@@ -170,6 +170,28 @@ La aplicación queda disponible en `http://localhost:5173`.
 6. Usa **COMMIT** o **ROLLBACK** para finalizar la transacción.
 7. Haz clic en **Simular fallo** para interrumpir una transacción activa y luego ve a la pestaña **Recuperación** para ejecutar el proceso de recuperación.
 8. La pestaña **Bitácora (WAL)** muestra todas las operaciones registradas con sus imágenes antes/después.
+
+### Usar los nodos existentes en /docker
+
+1. Haz clic en **"+ Nueva conexión"** y completa el formulario con las siguientes credenciales:
+
+   **Para PostgreSQL:**
+   * **Nombre de la Conexión:** (Ej. PostgreSQL Docker)
+   * **Tipo de Motor:** PostgreSQL
+   * **Host:** localhost
+   * **Puerto:** 5432
+   * **Usuario:** postgres
+   * **Contraseña:** password
+   * **Base de Datos:** integrated-client
+
+   **Para MongoDB:**
+   * **Nombre de la Conexión:** (Ej. MongoDB Docker)
+   * **Tipo de Motor:** MongoDB
+   * **Host:** localhost
+   * **Puerto:** 27017
+   * **Usuario:** mongo
+   * **Contraseña:** password
+   * **Base de Datos:** admin *(o déjalo en blanco si tu adaptador no lo requiere)*
 
 ---
 
