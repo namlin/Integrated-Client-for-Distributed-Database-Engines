@@ -1,0 +1,32 @@
+services:
+
+    postgreSQL:
+        image: postgres:18
+        container_name: postgreSQL_container
+        ports:
+            - "5432:5432"
+        restart: no
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: password
+            POSTGRES_DB: integrated-client
+        
+        volumes:
+            - posgreSQL-volume:/data
+
+    mongoDB:
+        image: mongo:7.0.34
+        container_name: mongoDB_container
+        ports:
+            - "27017:27017"
+        restart: no
+        environment:
+            MONGO_INITDB_ROOT_USERNAME: mongo
+            MONGO_INITDB_ROOT_PASSWORD: password
+        
+        volumes:
+            - mongoDB-volume:/data
+
+volumes:
+    posgreSQL-volume:
+    mongoDB-volume:
