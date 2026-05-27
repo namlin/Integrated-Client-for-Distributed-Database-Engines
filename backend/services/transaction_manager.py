@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from platform import node
 from typing import Dict, List, Optional
 
 from database.init_wal_db import get_db_connection
@@ -10,6 +11,8 @@ def _now() -> str:
 
 
 class TransactionManager:
+    pending_operations = dict()
+
     def _generate_tid(self) -> str:
         db = get_db_connection()
         count = db.execute('SELECT COUNT(*) FROM transactions').fetchone()[0]
@@ -26,6 +29,7 @@ class TransactionManager:
         db.commit()
         db.close()
         wal_service.log_begin(tid, protocol, engine_id)
+        transaction_manager.pending_operations[tid] = []
         return tid
 
     def commit(self, tid: str):
@@ -33,12 +37,17 @@ class TransactionManager:
         if not txn:
             raise ValueError(f"Transaction {tid} not found")
         wal_service.log_commit(tid, txn.get('engine_id', ''))
+        if(txn.get('protocol', '') in ('No-Undo/No-Redo', 'No-Undo/Redo')):
+            self.pending_operations.pop(tid)
 
     def rollback(self, tid: str):
         txn = self.get_transaction(tid)
         if not txn:
             raise ValueError(f"Transaction {tid} not found")
         wal_service.log_abort(tid, txn.get('engine_id', ''))
+        
+        if(txn.get('protocol', '') in ('No-Undo/No-Redo', 'No-Undo/Redo')):
+            self.pending_operations.pop(tid)
 
     def mark_failed(self, tid: str):
         db = get_db_connection()
