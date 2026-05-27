@@ -118,9 +118,8 @@ Esto levanta:
 
 | Servicio | Motor | Puerto | Usuario | Contraseña | Base de datos |
 |---|---|---|---|---|---|
-| `postgres` | PostgreSQL 16 | 5432 | `postgres` | `postgres` | `dbclient` |
-| `mongo` | MongoDB 7 | 27017 | `admin` | `admin` | `dbclient` |
-
+| `postgres` | PostgreSQL 16 | 5432 | `postgres` | `password` | `integrated-client` |
+| `mongo` | MongoDB 7 | 27017 | `mongo` | `password` | `integrated-client` |
 Para detener los nodos:
 
 ```bash
