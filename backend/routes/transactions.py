@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from models.schemas import TransactionBegin, TransactionResponse
 from services.transaction_manager import transaction_manager
 
@@ -6,9 +6,9 @@ router = APIRouter(prefix='/transactions', tags=['transactions'])
 
 
 @router.post('/begin', response_model=dict)
-def begin_transaction(payload: TransactionBegin):
+def begin_transaction(payload: TransactionBegin, request: Request):
     try:
-        tid = transaction_manager.begin(payload.connectionId, payload.protocol)
+        tid = transaction_manager.begin(payload.connectionId, payload.protocol, request.state.client_id)
         txn = transaction_manager.get_transaction(tid)
         return txn
     except Exception as e:
@@ -16,22 +16,22 @@ def begin_transaction(payload: TransactionBegin):
 
 
 @router.get('', response_model=list)
-def list_transactions():
-    return transaction_manager.get_all()
+def list_transactions(request: Request):
+    return transaction_manager.get_all(request.state.client_id)
 
 
 @router.get('/{tid}', response_model=dict)
-def get_transaction(tid: str):
-    txn = transaction_manager.get_transaction(tid)
+def get_transaction(tid: str, request: Request):
+    txn = transaction_manager.get_transaction(tid, request.state.client_id)
     if not txn:
         raise HTTPException(status_code=404, detail=f'Transaction {tid} not found')
     return txn
 
 
 @router.put('/{tid}/commit', response_model=dict)
-def commit(tid: str):
+def commit(tid: str, request: Request):
     try:
-        transaction_manager.commit(tid)
+        transaction_manager.commit(tid, request.state.client_id)
         return {'tid': tid, 'status': 'COMMITTED', 'message': f'Transaction {tid} committed'}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -40,9 +40,9 @@ def commit(tid: str):
 
 
 @router.put('/{tid}/rollback', response_model=dict)
-def rollback(tid: str):
+def rollback(tid: str, request: Request):
     try:
-        transaction_manager.rollback(tid)
+        transaction_manager.rollback(tid, request.state.client_id)
         return {'tid': tid, 'status': 'ABORTED', 'message': f'Transaction {tid} rolled back'}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

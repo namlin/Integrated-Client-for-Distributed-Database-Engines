@@ -81,8 +81,9 @@ def _build_undo(operation: str, table: str, before_str: str, after_str: str) -> 
 
 class QueryExecutor:
     def execute(self, connection_id: str, query: str,
-                protocol: str = 'Undo/Redo', tid: Optional[str] = None) -> Dict:
-        adapter = db_manager.get_adapter(connection_id)
+                protocol: str = 'Undo/Redo', tid: Optional[str] = None,
+                client_id: str = '') -> Dict:
+        adapter = db_manager.get_adapter(connection_id, client_id)
         if not adapter:
             raise ValueError(f"No active connection: {connection_id}")
 
@@ -95,7 +96,7 @@ class QueryExecutor:
         current_tid = tid
 
         for stmt in statements:
-            res = self._exec_stmt(adapter, connection_id, stmt, protocol, current_tid)
+            res = self._exec_stmt(adapter, connection_id, stmt, protocol, current_tid, client_id)
             all_results.extend(res.get('results', []))
             rows_affected += res.get('rowsAffected', 0)
             if res.get('tid'):
@@ -113,21 +114,22 @@ class QueryExecutor:
         }
 
     def _exec_stmt(self, adapter: BaseAdapter, connection_id: str,
-                   query: str, protocol: str, tid: Optional[str]) -> Dict:
+                   query: str, protocol: str, tid: Optional[str],
+                   client_id: str = '') -> Dict:
         qtype = _parse_type(query)
 
         if qtype == 'BEGIN':
-            new_tid = transaction_manager.begin(connection_id, protocol)
+            new_tid = transaction_manager.begin(connection_id, protocol, client_id)
             return {'results': [], 'rowsAffected': 0, 'tid': new_tid, 'message': f'Transaction {new_tid} started'}
 
         if qtype == 'COMMIT':
             if tid:
-                transaction_manager.commit(tid)
+                transaction_manager.commit(tid, client_id)
             return {'results': [], 'rowsAffected': 0, 'message': f'Transaction {tid} committed'}
 
         if qtype == 'ROLLBACK':
             if tid:
-                transaction_manager.rollback(tid)
+                transaction_manager.rollback(tid, client_id)
                 self._apply_undo(tid, adapter)
             return {'results': [], 'rowsAffected': 0, 'message': f'Transaction {tid} rolled back'}
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from services.db_manager import db_manager
 from services.wal_service import wal_service
 from services.transaction_manager import transaction_manager
@@ -7,8 +7,8 @@ router = APIRouter(prefix='/health', tags=['health'])
 
 
 @router.get('', response_model=dict)
-def health():
-    connections = db_manager.get_connections()
+def health(request: Request):
+    connections = db_manager.get_connections(request.state.client_id)
     return {
         'status': 'ok',
         'connections': len(connections),

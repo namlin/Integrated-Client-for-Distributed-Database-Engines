@@ -70,22 +70,30 @@ class WALService:
         db.close()
 
     def get_entries(self, tid: Optional[str] = None, operation: Optional[str] = None,
-                    start_ts: Optional[str] = None, end_ts: Optional[str] = None) -> List[Dict]:
-        sql = 'SELECT * FROM wal_entries WHERE 1=1'
-        params: list = []
+                    start_ts: Optional[str] = None, end_ts: Optional[str] = None,
+                    client_id: Optional[str] = None) -> List[Dict]:
+        if client_id is not None:
+            sql = ('SELECT w.* FROM wal_entries w '
+                   'JOIN transactions t ON w.tid = t.tid '
+                   'WHERE t.client_id=?')
+            params: list = [client_id]
+        else:
+            sql = 'SELECT * FROM wal_entries WHERE 1=1'
+            params = []
+
         if tid:
-            sql += ' AND tid=?'
+            sql += ' AND w.tid=?' if client_id is not None else ' AND tid=?'
             params.append(tid)
         if operation:
-            sql += ' AND operation=?'
+            sql += ' AND w.operation=?' if client_id is not None else ' AND operation=?'
             params.append(operation)
         if start_ts:
-            sql += ' AND timestamp>=?'
+            sql += ' AND w.timestamp>=?' if client_id is not None else ' AND timestamp>=?'
             params.append(start_ts)
         if end_ts:
-            sql += ' AND timestamp<=?'
+            sql += ' AND w.timestamp<=?' if client_id is not None else ' AND timestamp<=?'
             params.append(end_ts)
-        sql += ' ORDER BY id ASC'
+        sql += ' ORDER BY w.id ASC' if client_id is not None else ' ORDER BY id ASC'
 
         db = get_db_connection()
         rows = db.execute(sql, params).fetchall()

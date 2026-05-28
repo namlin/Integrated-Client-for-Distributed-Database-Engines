@@ -19,12 +19,12 @@ class TransactionManager:
         db.close()
         return f"TXN-{str(count + 1).zfill(4)}"
 
-    def begin(self, engine_id: str, protocol: str) -> str:
+    def begin(self, engine_id: str, protocol: str, client_id: str) -> str:
         tid = self._generate_tid()
         db = get_db_connection()
         db.execute(
-            'INSERT INTO transactions (tid,status,protocol,engine_id,start_ts) VALUES (?,?,?,?,?)',
-            (tid, 'ACTIVE', protocol, engine_id, _now()),
+            'INSERT INTO transactions (tid,status,protocol,engine_id,client_id,start_ts) VALUES (?,?,?,?,?,?)',
+            (tid, 'ACTIVE', protocol, engine_id, client_id, _now()),
         )
         db.commit()
         db.close()
@@ -32,16 +32,16 @@ class TransactionManager:
         transaction_manager.pending_operations[tid] = []
         return tid
 
-    def commit(self, tid: str):
-        txn = self.get_transaction(tid)
+    def commit(self, tid: str, client_id: str):
+        txn = self.get_transaction(tid, client_id)
         if not txn:
             raise ValueError(f"Transaction {tid} not found")
         wal_service.log_commit(tid, txn.get('engine_id', ''))
         if(txn.get('protocol', '') in ('No-Undo/No-Redo', 'No-Undo/Redo')):
             self.pending_operations.pop(tid)
 
-    def rollback(self, tid: str):
-        txn = self.get_transaction(tid)
+    def rollback(self, tid: str, client_id: str):
+        txn = self.get_transaction(tid, client_id)
         if not txn:
             raise ValueError(f"Transaction {tid} not found")
         wal_service.log_abort(tid, txn.get('engine_id', ''))
@@ -55,16 +55,22 @@ class TransactionManager:
         db.commit()
         db.close()
 
-    def get_transaction(self, tid: str) -> Optional[Dict]:
+    def get_transaction(self, tid: str, client_id: Optional[str] = None) -> Optional[Dict]:
         db = get_db_connection()
-        row = db.execute('SELECT * FROM transactions WHERE tid=?', (tid,)).fetchone()
+        if client_id is not None:
+            row = db.execute(
+                'SELECT * FROM transactions WHERE tid=? AND client_id=?', (tid, client_id)
+            ).fetchone()
+        else:
+            row = db.execute('SELECT * FROM transactions WHERE tid=?', (tid,)).fetchone()
         db.close()
         return dict(row) if row else None
 
-    def get_all(self) -> List[Dict]:
+    def get_all(self, client_id: str) -> List[Dict]:
         db = get_db_connection()
         rows = db.execute(
-            'SELECT * FROM transactions ORDER BY start_ts DESC LIMIT 50'
+            'SELECT * FROM transactions WHERE client_id=? ORDER BY start_ts DESC LIMIT 50',
+            (client_id,),
         ).fetchall()
         db.close()
         result = []

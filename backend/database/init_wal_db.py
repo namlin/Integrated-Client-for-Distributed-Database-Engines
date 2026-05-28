@@ -27,6 +27,7 @@ def init_db():
             status TEXT NOT NULL DEFAULT 'ACTIVE',
             protocol TEXT NOT NULL,
             engine_id TEXT,
+            client_id TEXT,
             start_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             end_ts TIMESTAMP
         );
@@ -54,6 +55,12 @@ def init_db():
         );
     ''')
     conn.commit()
+    # Migration: add client_id to existing transactions tables
+    try:
+        conn.execute('ALTER TABLE transactions ADD COLUMN client_id TEXT')
+        conn.commit()
+    except Exception:
+        pass
     conn.close()
 
 

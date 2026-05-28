@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from database.init_wal_db import init_db
 from routes.connections import router as connections_router
@@ -31,6 +32,24 @@ app.add_middleware(
     allow_methods=['*'],
     allow_headers=['*'],
 )
+
+_EXEMPT_PATHS = {'/', '/docs', '/openapi.json', '/redoc'}
+
+
+@app.middleware('http')
+async def session_middleware(request: Request, call_next):
+    if request.method != 'OPTIONS' and request.url.path not in _EXEMPT_PATHS:
+        client_id = request.headers.get('X-Client-Session-Id', '').strip()
+        if not client_id:
+            return JSONResponse(
+                status_code=400,
+                content={'detail': 'Missing X-Client-Session-Id header'},
+            )
+        request.state.client_id = client_id
+    else:
+        request.state.client_id = ''
+    return await call_next(request)
+
 
 API_PREFIX = '/api'
 app.include_router(connections_router, prefix=API_PREFIX)

@@ -1,10 +1,15 @@
 const API_BASE_URL = 'http://localhost:8000/api';
 
+const getSessionId = () => localStorage.getItem('db_client_session_id') || '';
+
 const apiFetch = async (endpoint, method = 'GET', data = null) => {
   const url = `${API_BASE_URL}${endpoint}`;
   const options = {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Client-Session-Id': getSessionId(),
+    },
   };
   if (data && (method === 'POST' || method === 'PUT')) {
     options.body = JSON.stringify(data);
