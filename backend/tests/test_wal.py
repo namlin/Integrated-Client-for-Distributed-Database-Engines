@@ -1,13 +1,14 @@
 import pytest
 from services.wal_service import WALService
 from services.transaction_manager import TransactionManager
+TEST_CLIENT_ID = 'test-session-001'
 
 
 def test_wal_log_and_retrieve():
     svc = WALService()
     tm = TransactionManager()
 
-    tid = tm.begin('conn-test', 'Undo/Redo')
+    tid = tm.begin('conn-test', 'Undo/Redo', TEST_CLIENT_ID)
     entry_id = svc.log_operation(
         tid=tid, operation='UPDATE', table_name='students',
         before_image={'id': 1, 'grade': 80},
@@ -27,7 +28,7 @@ def test_wal_filter_by_operation():
     svc = WALService()
     tm = TransactionManager()
 
-    tid = tm.begin('conn-filter', 'No-Undo/Redo')
+    tid = tm.begin('conn-filter', 'No-Undo/Redo', TEST_CLIENT_ID)
     svc.log_operation(tid=tid, operation='INSERT', table_name='orders',
                       before_image=None, engine_id='conn-filter',
                       original_query="INSERT INTO orders VALUES (1,'item')")

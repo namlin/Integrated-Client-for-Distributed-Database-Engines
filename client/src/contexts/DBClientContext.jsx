@@ -67,6 +67,9 @@ export function DBClientProvider({ children }) {
   // ── Boot: load connections + health ───────────────────────────────────────
 
   useEffect(() => {
+    if (!localStorage.getItem('db_client_session_id')) {
+      localStorage.setItem('db_client_session_id', crypto.randomUUID());
+    }
     (async () => {
       try {
         const conns = await connectionAPI.getConnections();

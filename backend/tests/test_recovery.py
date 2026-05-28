@@ -3,6 +3,7 @@ import pytest
 from services.wal_service import WALService
 from services.transaction_manager import TransactionManager
 from services.recovery_service import RecoveryService
+TEST_CLIENT_ID = 'test-session-001'
 
 
 def _setup_transaction(protocol: str):
@@ -10,7 +11,7 @@ def _setup_transaction(protocol: str):
     svc = WALService()
     rs = RecoveryService()
 
-    tid = tm.begin('conn-recovery', protocol)
+    tid = tm.begin('conn-recovery', protocol, TEST_CLIENT_ID)
     entry_id = svc.log_operation(
         tid=tid, operation='UPDATE', table_name='accounts',
         before_image={'id': 1, 'balance': 500},
@@ -33,7 +34,7 @@ def test_no_undo_no_redo_failed():
 
 def test_no_undo_redo_committed():
     tid, tm, svc, rs = _setup_transaction('No-Undo/Redo')
-    tm.commit(tid)
+    tm.commit(tid, TEST_CLIENT_ID)
     result = rs.run_recovery(tid, 'No-Undo/Redo')
     assert result['status'] == 'completed'
     assert any('REDO' in a for a in result['recovery_actions'])
@@ -59,7 +60,7 @@ def test_undo_redo_failed():
 
 def test_undo_redo_committed():
     tid, tm, svc, rs = _setup_transaction('Undo/Redo')
-    tm.commit(tid)
+    tm.commit(tid, TEST_CLIENT_ID)
     result = rs.run_recovery(tid, 'Undo/Redo')
     assert result['status'] == 'completed'
     assert any('REDO' in a for a in result['recovery_actions'])

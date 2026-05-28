@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from models.schemas import QueryExecute, QueryResult
 from services.query_executor import query_executor
 
@@ -6,13 +6,14 @@ router = APIRouter(prefix='/queries', tags=['queries'])
 
 
 @router.post('/execute', response_model=dict)
-def execute_query(payload: QueryExecute):
+def execute_query(payload: QueryExecute, request: Request):
     try:
         result = query_executor.execute(
             connection_id=payload.connectionId,
             query=payload.query,
             protocol=payload.protocol or 'Undo/Redo',
             tid=payload.tid,
+            client_id=request.state.client_id,
         )
         return result
     except ValueError as e:

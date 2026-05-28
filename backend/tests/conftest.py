@@ -20,10 +20,13 @@ def use_temp_wal_db():
     os.unlink(tmp_path)
 
 
+TEST_CLIENT_ID = 'test-session-001'
+
+
 @pytest.fixture(scope='session')
 def client(use_temp_wal_db):
     from app import app
-    with TestClient(app) as c:
+    with TestClient(app, headers={'X-Client-Session-Id': TEST_CLIENT_ID}) as c:
         yield c
 
 
