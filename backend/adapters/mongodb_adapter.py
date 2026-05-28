@@ -1,7 +1,6 @@
 import json
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from .base_adapter import BaseAdapter
-
 
 class MongoDBAdapter(BaseAdapter):
     def connect(self) -> bool:
@@ -43,6 +42,8 @@ class MongoDBAdapter(BaseAdapter):
         Query format (JSON):
         {"collection": "name", "operation": "find|insertOne|updateOne|deleteOne|deleteMany",
          "filter": {}, "document": {}, "update": {}}
+        
+        For UPDATE/DELETE operations, returns metadata with '_before' key for WAL capture.
         """
         try:
             cmd = json.loads(query)
@@ -60,18 +61,52 @@ class MongoDBAdapter(BaseAdapter):
             for d in docs:
                 d['_id'] = str(d['_id'])
             return docs, len(docs)
+        
         if op == 'insertone':
             r = col.insert_one(cmd.get('document', {}))
             return [{'inserted_id': str(r.inserted_id)}], 1
+        
+        # Capturar before_image para updateone:
         if op == 'updateone':
-            r = col.update_one(cmd.get('filter', {}), cmd.get('update', {}))
-            return [], r.modified_count
+            filter_doc = cmd.get('filter', {})
+            update_doc = cmd.get('update', {})
+            before_doc = col.find_one(filter_doc)
+            r = col.update_one(filter_doc, update_doc)
+
+            # Normalizar _id a string y retornar en metadata para el WAL:
+            if before_doc and '_id' in before_doc:
+                before_doc['_id'] = str(before_doc['_id'])
+            result = [{'modified_count': r.modified_count, '_before': before_doc}] if before_doc else []
+
+            return result, r.modified_count
+        
+        # Capturar before_image para deleteone:
         if op == 'deleteone':
-            r = col.delete_one(cmd.get('filter', {}))
-            return [], r.deleted_count
+            filter_doc = cmd.get('filter', {})
+            before_doc = col.find_one(filter_doc)
+            r = col.delete_one(filter_doc)
+
+            # Normalizar _id a string y retornar en metadata para el WAL:
+            if before_doc and '_id' in before_doc:
+                before_doc['_id'] = str(before_doc['_id'])
+            result = [{'deleted_count': r.deleted_count, '_before': before_doc}] if before_doc else []
+
+            return result, r.deleted_count
+        
+        # Capturar before_image para deletemany:
         if op == 'deletemany':
-            r = col.delete_many(cmd.get('filter', {}))
-            return [], r.deleted_count
+            filter_doc = cmd.get('filter', {})
+            before_docs = list(col.find(filter_doc))
+            r = col.delete_many(filter_doc)
+
+            # Normalizar _id a string en todos los docs:
+            for doc in before_docs:
+                if '_id' in doc:
+                    doc['_id'] = str(doc['_id'])
+            result = [{'deleted_count': r.deleted_count, '_before': before_docs}] if before_docs else []
+
+            return result, r.deleted_count
+        
         raise ValueError(f"Unknown MongoDB operation: {op}")
 
     def fetch_before_image(self, table: str, where_clause: str) -> List[Dict]:
@@ -86,8 +121,46 @@ class MongoDBAdapter(BaseAdapter):
             return []
 
     def execute_recovery_sql(self, sql: str) -> bool:
+        """Fallback para SQL. No debería usarse para Mongo recovery."""
         try:
             self.execute_query(sql)
             return True
+        except Exception:
+            return False
+
+    def execute_mongo_recovery(self, operation: str, collection: str, 
+                               filter_doc: Dict, document: Optional[Dict] = None, 
+                               update_doc: Optional[Dict] = None) -> bool:
+        """
+        Ejecuta operaciones de recuperación en Mongo usando compensaciones.
+        
+        Args:
+            operation: 'insertOne', 'updateOne', 'deleteOne'
+            collection: nombre de la colección
+            filter_doc: filtro para find/delete/update
+            document: documento a insertar (para insertOne)
+            update_doc: operador de update (para updateOne)
+        
+        Returns:
+            bool: True si la operación fue exitosa
+        """
+        try:
+            col = self.connection[collection]
+            
+            if operation == 'insertOne':
+                if document:
+                    col.insert_one(document)
+                return True
+            
+            if operation == 'updateOne':
+                if update_doc:
+                    col.update_one(filter_doc, update_doc)
+                return True
+            
+            if operation == 'deleteOne':
+                col.delete_one(filter_doc)
+                return True
+            
+            return False
         except Exception:
             return False

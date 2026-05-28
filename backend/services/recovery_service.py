@@ -84,6 +84,70 @@ def _build_redo(entry: dict) -> Optional[str]:
     return None
 
 
+def _build_mongo_undo(entry: dict) -> Optional[Dict]:
+    """
+    Construye una operación compensatoria en Mongo para deshacer un cambio.
+    Retorna: {'operation': 'insertOne'|'updateOne'|'deleteOne', 
+              'collection': str, 'filter': dict, 'document': dict, 'update': dict}
+    """
+    op = entry['op']
+    collection = entry['tabla']
+    before = _load_json(entry['before'])
+    after = _load_json(entry['after'])
+
+    if op == 'INSERT' and after:
+        # Undo INSERT = DELETE el documento insertado
+        doc = after if isinstance(after, dict) else (after[0] if after else {})
+        filter_doc = {'_id': doc.get('_id', '')}
+        return {'operation': 'deleteOne', 'collection': collection, 'filter': filter_doc}
+
+    if op == 'UPDATE' and before:
+        # Undo UPDATE = Restaurar el before_image
+        doc = before if isinstance(before, dict) else (before[0] if before else {})
+        filter_doc = {'_id': doc.get('_id', '')}
+        update_doc = {'$set': {k: v for k, v in doc.items() if k != '_id'}}
+        return {'operation': 'updateOne', 'collection': collection, 
+                'filter': filter_doc, 'update': update_doc}
+
+    if op == 'DELETE' and before:
+        # Undo DELETE = Reinsertar el documento
+        doc = before if isinstance(before, dict) else (before[0] if before else {})
+        return {'operation': 'insertOne', 'collection': collection, 'document': doc}
+
+    return None
+
+
+def _build_mongo_redo(entry: dict) -> Optional[Dict]:
+    """
+    Construye una operación de redo en Mongo.
+    """
+    op = entry['op']
+    collection = entry['tabla']
+    after = _load_json(entry['after'])
+    before = _load_json(entry['before'])
+
+    if op == 'INSERT' and after:
+        # Redo INSERT = Reinsertar
+        doc = after if isinstance(after, dict) else (after[0] if after else {})
+        return {'operation': 'insertOne', 'collection': collection, 'document': doc}
+
+    if op == 'UPDATE' and after:
+        # Redo UPDATE = Aplicar el after_image
+        doc = after if isinstance(after, dict) else (after[0] if after else {})
+        filter_doc = {'_id': doc.get('_id', '')}
+        update_doc = {'$set': {k: v for k, v in doc.items() if k != '_id'}}
+        return {'operation': 'updateOne', 'collection': collection,
+                'filter': filter_doc, 'update': update_doc}
+
+    if op == 'DELETE' and before:
+        # Redo DELETE = Eliminar de nuevo
+        doc = before if isinstance(before, dict) else (before[0] if before else {})
+        filter_doc = {'_id': doc.get('_id', '')}
+        return {'operation': 'deleteOne', 'collection': collection, 'filter': filter_doc}
+
+    return None
+
+
 class RecoveryService:
     def simulate_failure(self, tid: str) -> dict:
         txn = transaction_manager.get_transaction(tid)
@@ -105,6 +169,9 @@ class RecoveryService:
 
         committed = txn['status'] == 'COMMITTED'
         failed = txn['status'] in ('FAILED', 'ABORTED', 'ACTIVE')
+        
+        # Detectar motor
+        engine_type = adapter.__class__.__name__ if adapter else 'Unknown'
 
         actions: List[str] = []
         before_state = (f"Transaction {tid}: status={txn['status']}, "
@@ -124,10 +191,16 @@ class RecoveryService:
             if committed:
                 actions.append('[No-Undo/Redo] Transaction committed — applying REDO from WAL:')
                 for e in writes:
-                    sql = _build_redo(e)
-                    if sql:
-                        actions.append(f'  REDO ({e["op"]} on {e["tabla"]}): {sql}')
-                        self._try_exec(adapter, sql, actions)
+                    if engine_type == 'MongoDBAdapter':
+                        mongo_op = _build_mongo_redo(e)
+                        if mongo_op:
+                            actions.append(f'  REDO ({e["op"]} on {e["tabla"]}): {mongo_op["operation"]} {mongo_op["collection"]}')
+                            self._try_exec_mongo(adapter, mongo_op, actions)
+                    else:
+                        sql = _build_redo(e)
+                        if sql:
+                            actions.append(f'  REDO ({e["op"]} on {e["tabla"]}): {sql}')
+                            self._try_exec(adapter, sql, actions)
             else:
                 actions.append(
                     '[No-Undo/Redo] Transaction did not commit — no-steal means dirty '
@@ -137,10 +210,16 @@ class RecoveryService:
             if failed:
                 actions.append('[Undo/No-Redo] Transaction did not commit — applying UNDO from WAL (reverse order):')
                 for e in reversed(writes):
-                    sql = _build_undo(e)
-                    if sql:
-                        actions.append(f'  UNDO ({e["op"]} on {e["tabla"]}): {sql}')
-                        self._try_exec(adapter, sql, actions)
+                    if engine_type == 'MongoDBAdapter':
+                        mongo_op = _build_mongo_undo(e)
+                        if mongo_op:
+                            actions.append(f'  UNDO ({e["op"]} on {e["tabla"]}): {mongo_op["operation"]} {mongo_op["collection"]}')
+                            self._try_exec_mongo(adapter, mongo_op, actions)
+                    else:
+                        sql = _build_undo(e)
+                        if sql:
+                            actions.append(f'  UNDO ({e["op"]} on {e["tabla"]}): {sql}')
+                            self._try_exec(adapter, sql, actions)
             else:
                 actions.append(
                     '[Undo/No-Redo] Transaction committed — force policy guarantees all '
@@ -150,17 +229,29 @@ class RecoveryService:
             if failed:
                 actions.append('[Undo/Redo] Transaction did not commit — applying UNDO (reverse order):')
                 for e in reversed(writes):
-                    sql = _build_undo(e)
-                    if sql:
-                        actions.append(f'  UNDO ({e["op"]} on {e["tabla"]}): {sql}')
-                        self._try_exec(adapter, sql, actions)
+                    if engine_type == 'MongoDBAdapter':
+                        mongo_op = _build_mongo_undo(e)
+                        if mongo_op:
+                            actions.append(f'  UNDO ({e["op"]} on {e["tabla"]}): {mongo_op["operation"]} {mongo_op["collection"]}')
+                            self._try_exec_mongo(adapter, mongo_op, actions)
+                    else:
+                        sql = _build_undo(e)
+                        if sql:
+                            actions.append(f'  UNDO ({e["op"]} on {e["tabla"]}): {sql}')
+                            self._try_exec(adapter, sql, actions)
             else:
                 actions.append('[Undo/Redo] Transaction committed — applying REDO:')
                 for e in writes:
-                    sql = _build_redo(e)
-                    if sql:
-                        actions.append(f'  REDO ({e["op"]} on {e["tabla"]}): {sql}')
-                        self._try_exec(adapter, sql, actions)
+                    if engine_type == 'MongoDBAdapter':
+                        mongo_op = _build_mongo_redo(e)
+                        if mongo_op:
+                            actions.append(f'  REDO ({e["op"]} on {e["tabla"]}): {mongo_op["operation"]} {mongo_op["collection"]}')
+                            self._try_exec_mongo(adapter, mongo_op, actions)
+                    else:
+                        sql = _build_redo(e)
+                        if sql:
+                            actions.append(f'  REDO ({e["op"]} on {e["tabla"]}): {sql}')
+                            self._try_exec(adapter, sql, actions)
 
         if not actions:
             actions.append('No recovery actions required for this transaction state.')
@@ -180,6 +271,18 @@ class RecoveryService:
         return {'tid': tid, 'protocol': protocol, 'status': 'completed',
                 'recovery_actions': actions, 'before_state': before_state,
                 'after_state': after_state}
+
+    def _try_exec_mongo(self, adapter: Optional[BaseAdapter], mongo_op: Dict, actions: List[str]):
+        """Ejecuta una operación de recuperación Mongo-native."""
+        if adapter and hasattr(adapter, 'execute_mongo_recovery'):
+            ok = adapter.execute_mongo_recovery(
+                mongo_op.get('operation'),
+                mongo_op.get('collection'),
+                mongo_op.get('filter', {}),
+                mongo_op.get('document'),
+                mongo_op.get('update'),
+            )
+            actions.append(f'    → {"Applied" if ok else "Failed (check DB state)"}')
 
     def _try_exec(self, adapter: Optional[BaseAdapter], sql: str, actions: List[str]):
         if adapter:

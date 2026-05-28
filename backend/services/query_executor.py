@@ -132,20 +132,31 @@ class QueryExecutor:
             return {'results': [], 'rowsAffected': 0, 'message': f'Transaction {tid} rolled back'}
 
         if qtype in ('INSERT', 'UPDATE', 'DELETE'):
-            return self._exec_write(adapter, connection_id, query, qtype, tid)
+            return self._exec_write(adapter, connection_id, query, qtype, tid, protocol)
 
-        # SELECT and DDL
+        # SELECT and DDL:
         rows, count = adapter.execute_query(query)
         return {'results': rows, 'rowsAffected': count}
 
     def _exec_write(self, adapter: BaseAdapter, connection_id: str,
-                    query: str, qtype: str, tid: Optional[str]) -> Dict:
+                    query: str, qtype: str, tid: Optional[str], protocol: str) -> Dict:
         table = _extract_table(query)
         where = _extract_where(query)
 
-        # Capture before-image (WAL principle: log before applying change)
+        # Auto-start a transaction when a write runs without an explicit TID:
+        auto_started = False
+        if not tid:
+            try:
+                tid = transaction_manager.begin(connection_id, protocol)
+                auto_started = True
+            except Exception:
+                tid = None
+
+        # Capture before-image:
         before = None
-        if qtype in ('UPDATE', 'DELETE') and table and where:
+        engine_type = adapter.__class__.__name__  # 'MongoDBAdapter', 'PostgreSQLAdapter', etc.
+
+        if qtype in ('UPDATE', 'DELETE') and table and where and engine_type != 'MongoDBAdapter':
             try:
                 rows = adapter.fetch_before_image(table, where)
                 if rows:
@@ -153,33 +164,68 @@ class QueryExecutor:
             except Exception:
                 pass
 
-        # Write WAL entry BEFORE executing
+        # Write WAL entry BEFORE executing:
         entry_id = None
-        if tid:
+        if tid and engine_type != 'MongoDBAdapter':
             entry_id = wal_service.log_operation(
                 tid=tid, operation=qtype, table_name=table,
                 before_image=before, engine_id=connection_id, original_query=query,
             )
 
-        # Execute
-        rows, affected = adapter.execute_query(query)
+        # Check if this transaction uses No-Steal policy (No-Undo protocols)
+        is_no_steal = protocol in ('No-Undo/No-Redo', 'No-Undo/Redo')
+        
+        if is_no_steal:
+            # NO-STEAL: Buffer the operation, don't execute immediately:
+            if tid not in transaction_manager.pending_operations:
+                transaction_manager.pending_operations[tid] = []
+            transaction_manager.pending_operations[tid].append({
+                'adapter': adapter,
+                'query': query
+            })
+            rows = []
+            affected = 0
+            after = None
+        else:
+            # STEAL: Execute immediately (Undo/* protocols):
+            rows, affected = adapter.execute_query(query)
 
-        # Capture after-image and update WAL
-        after = None
-        if rows:
-            after = rows[0] if len(rows) == 1 else rows
-        elif qtype == 'INSERT' and table:
-            try:
-                post = adapter.fetch_before_image(table, None)
-                if post:
-                    after = post[-1]
-            except Exception:
-                pass
+            if engine_type == 'MongoDBAdapter' and qtype in ('UPDATE', 'DELETE'):
+                if rows and isinstance(rows[0], dict) and '_before' in rows[0]:
+                    before_raw = rows[0].pop('_before')
+                    if before_raw:
+                        before = before_raw if isinstance(before_raw, list) else [before_raw]
 
-        if tid and entry_id:
-            wal_service.update_after_image(entry_id, after)
+            # Capturar after-image:
+            after = None
+            if rows:
+                after = rows[0] if len(rows) == 1 else rows
+            elif qtype == 'INSERT' and table:
+                try:
+                    post = adapter.fetch_before_image(table, None)
+                    if post:
+                        after = post[-1]
+                except Exception:
+                    pass
 
-        return {'results': rows, 'rowsAffected': affected}
+        # Log a WAL:
+        if tid:
+            entry_id = wal_service.log_operation(
+                tid=tid, operation=qtype, table_name=table,
+                before_image=before, engine_id=connection_id, original_query=query,
+            )
+            if entry_id and after:
+                wal_service.update_after_image(entry_id, after)
+
+        result = {'results': rows, 'rowsAffected': affected}
+
+        if tid:
+            result['tid'] = tid
+            if auto_started:
+                result['message'] = f'Transaction {tid} auto-started'
+            if is_no_steal:
+                result['message'] = f'Operation buffered (No-Steal policy). Will execute on COMMIT.'
+        return result
 
     def _apply_undo(self, tid: str, adapter: BaseAdapter):
         entries = wal_service.get_entries(tid=tid)
@@ -191,6 +237,5 @@ class QueryExecutor:
                         adapter.execute_recovery_sql(sql)
                     except Exception:
                         pass
-
 
 query_executor = QueryExecutor()
