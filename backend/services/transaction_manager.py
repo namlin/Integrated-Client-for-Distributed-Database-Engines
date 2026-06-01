@@ -36,9 +36,16 @@ class TransactionManager:
         txn = self.get_transaction(tid, client_id)
         if not txn:
             raise ValueError(f"Transaction {tid} not found")
+        protocol = txn.get('protocol', '')
+        if protocol in ('No-Undo/No-Redo', 'No-Undo/Redo'):
+            pending_ops = self.pending_operations.get(tid, [])
+            for operation in pending_ops:
+                adapter = operation.get('adapter')
+                query = operation.get('query')
+                if adapter and query:
+                    adapter.execute_query(query)
+            self.pending_operations.pop(tid, None)
         wal_service.log_commit(tid, txn.get('engine_id', ''))
-        if(txn.get('protocol', '') in ('No-Undo/No-Redo', 'No-Undo/Redo')):
-            self.pending_operations.pop(tid)
 
     def rollback(self, tid: str, client_id: str):
         txn = self.get_transaction(tid, client_id)
@@ -47,7 +54,7 @@ class TransactionManager:
         wal_service.log_abort(tid, txn.get('engine_id', ''))
         
         if(txn.get('protocol', '') in ('No-Undo/No-Redo', 'No-Undo/Redo')):
-            self.pending_operations.pop(tid)
+            self.pending_operations.pop(tid, None)
 
     def mark_failed(self, tid: str):
         db = get_db_connection()

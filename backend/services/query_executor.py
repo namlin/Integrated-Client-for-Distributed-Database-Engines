@@ -42,6 +42,133 @@ def _extract_where(query: str) -> Optional[str]:
     return m.group(1).strip() if m else None
 
 
+def _parse_literal(value: str):
+    token = value.strip()
+    if token.upper() == 'NULL':
+        return None
+    if token.upper() == 'TRUE':
+        return True
+    if token.upper() == 'FALSE':
+        return False
+    if (token.startswith("'") and token.endswith("'")) or (token.startswith('"') and token.endswith('"')):
+        return token[1:-1]
+    try:
+        if '.' in token:
+            return float(token)
+        return int(token)
+    except ValueError:
+        return token
+
+
+def _split_csv(text: str) -> List[str]:
+    parts = []
+    current = []
+    in_quotes = False
+    quote_char = ''
+    for char in text:
+        if char in ('"', "'"):
+            if in_quotes and char == quote_char:
+                in_quotes = False
+                quote_char = ''
+            elif not in_quotes:
+                in_quotes = True
+                quote_char = char
+        if char == ',' and not in_quotes:
+            parts.append(''.join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    if current:
+        parts.append(''.join(current).strip())
+    return [part for part in parts if part]
+
+
+def _row_matches_where(row: Dict, where_clause: Optional[str]) -> bool:
+    if not where_clause:
+        return True
+    conditions = re.split(r'\s+AND\s+', where_clause, flags=re.IGNORECASE)
+    for condition in conditions:
+        match = re.match(r'^(\w+)\s*=\s*(.+)$', condition.strip())
+        if not match:
+            return False
+        column, raw_value = match.groups()
+        expected = _parse_literal(raw_value)
+        if row.get(column) != expected:
+            return False
+    return True
+
+
+def _parse_update_assignments(query: str) -> tuple[Optional[str], Dict[str, object]]:
+    match = re.match(r'^UPDATE\s+\w+\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$', query, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return None, {}
+    set_clause, where_clause = match.groups()
+    assignments: Dict[str, object] = {}
+    for part in _split_csv(set_clause):
+        assignment = re.match(r'^(\w+)\s*=\s*(.+)$', part.strip())
+        if assignment:
+            column, raw_value = assignment.groups()
+            assignments[column] = _parse_literal(raw_value)
+    return where_clause.strip() if where_clause else None, assignments
+
+
+def _parse_insert_row(query: str) -> Optional[Dict[str, object]]:
+    match = re.match(
+        r'^INSERT\s+INTO\s+\w+\s*\((.+?)\)\s*VALUES\s*\((.+?)\)$',
+        query,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None
+    columns_text, values_text = match.groups()
+    columns = [column.strip() for column in columns_text.split(',') if column.strip()]
+    values = [_parse_literal(value) for value in _split_csv(values_text)]
+    if len(columns) != len(values):
+        return None
+    return dict(zip(columns, values))
+
+
+def _apply_query_to_rows(rows: List[Dict], query: str, qtype: str) -> List[Dict]:
+    if qtype == 'UPDATE':
+        where_clause, assignments = _parse_update_assignments(query)
+        updated_rows = []
+        for row in rows:
+            next_row = dict(row)
+            if _row_matches_where(next_row, where_clause):
+                next_row.update(assignments)
+            updated_rows.append(next_row)
+        return updated_rows
+
+    if qtype == 'DELETE':
+        where_clause = _extract_where(query)
+        return [dict(row) for row in rows if not _row_matches_where(row, where_clause)]
+
+    if qtype == 'INSERT':
+        new_row = _parse_insert_row(query)
+        if new_row:
+            return [dict(row) for row in rows] + [new_row]
+
+    return [dict(row) for row in rows]
+
+
+def _project_pending_rows(rows: List[Dict], query: str, tid: Optional[str], protocol: str) -> List[Dict]:
+    if not tid or protocol not in ('No-Undo/No-Redo', 'No-Undo/Redo'):
+        return rows
+
+    table = _extract_table(query)
+    if not table:
+        return rows
+
+    projected = [dict(row) for row in rows]
+    for operation in transaction_manager.pending_operations.get(tid, []):
+        if operation.get('table') != table:
+            continue
+        operation_query = operation.get('query', '')
+        operation_type = operation.get('qtype') or _parse_type(operation_query)
+        projected = _apply_query_to_rows(projected, operation_query, operation_type)
+    return projected
+
+
 def _sql_val(v) -> str:
     if v is None:
         return 'NULL'
@@ -133,15 +260,21 @@ class QueryExecutor:
                 self._apply_undo(tid, adapter)
             return {'results': [], 'rowsAffected': 0, 'message': f'Transaction {tid} rolled back'}
 
+        if qtype == 'SELECT':
+            rows, count = adapter.execute_query(query)
+            rows = _project_pending_rows(rows, query, tid, protocol)
+            return {'results': rows, 'rowsAffected': len(rows) if rows else count}
+
         if qtype in ('INSERT', 'UPDATE', 'DELETE'):
-            return self._exec_write(adapter, connection_id, query, qtype, tid, protocol)
+            return self._exec_write(adapter, connection_id, query, qtype, tid, protocol, client_id)
 
         # SELECT and DDL:
         rows, count = adapter.execute_query(query)
         return {'results': rows, 'rowsAffected': count}
 
     def _exec_write(self, adapter: BaseAdapter, connection_id: str,
-                    query: str, qtype: str, tid: Optional[str], protocol: str) -> Dict:
+                    query: str, qtype: str, tid: Optional[str], protocol: str,
+                    client_id: str = '') -> Dict:
         table = _extract_table(query)
         where = _extract_where(query)
 
@@ -149,7 +282,7 @@ class QueryExecutor:
         auto_started = False
         if not tid:
             try:
-                tid = transaction_manager.begin(connection_id, protocol)
+                tid = transaction_manager.begin(connection_id, protocol, client_id)
                 auto_started = True
             except Exception:
                 tid = None
@@ -183,7 +316,9 @@ class QueryExecutor:
                 transaction_manager.pending_operations[tid] = []
             transaction_manager.pending_operations[tid].append({
                 'adapter': adapter,
-                'query': query
+                'query': query,
+                'qtype': qtype,
+                'table': table,
             })
             rows = []
             affected = 0
