@@ -20,8 +20,8 @@ class BaseAdapter(ABC):
         pass
 
     @abstractmethod
-    def execute_query(self, query: str) -> Tuple[List[Dict], int]:
-        """Returns (rows, rows_affected)"""
+    def execute_query(self, query: str) -> Tuple[List[Dict], int, List[str]]:
+        """Returns (rows, rows_affected, columns)"""
         pass
 
     @abstractmethod

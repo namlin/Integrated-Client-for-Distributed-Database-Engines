@@ -37,14 +37,15 @@ class MySQLAdapter(BaseAdapter):
         except Exception:
             return False
 
-    def execute_query(self, query: str) -> Tuple[List[Dict], int]:
+    def execute_query(self, query: str) -> Tuple[List[Dict], int, List[str]]:
         cur = self.connection.cursor(dictionary=True)
         try:
             cur.execute(query)
+            columns = [desc[0] for desc in cur.description] if cur.description else []
             if cur.description:
                 rows = cur.fetchall()
-                return rows, len(rows)
-            return [], cur.rowcount if cur.rowcount >= 0 else 0
+                return rows, len(rows), columns
+            return [], cur.rowcount if cur.rowcount >= 0 else 0, columns
         except Exception:
             raise
 

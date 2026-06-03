@@ -5,11 +5,16 @@ export function EditorPanel() {
   const {
     activeEngine,
     activeTransaction,
+    transactions,
     queryContent, setQueryContent,
     executeQuery, commitTransaction, rollbackTransaction,
     isExecuting,
     queryError,
   } = useContext(DBClientContext);
+
+  // Check if there are any active transactions
+  const hasActiveTransactions = transactions.some((txn) => txn.status === 'ACTIVE');
+  const activeTransactionCount = transactions.filter((txn) => txn.status === 'ACTIVE').length;
 
   return (
     <div className="flex-1 flex flex-col bg-white border-r border-gray-200">
@@ -20,9 +25,9 @@ export function EditorPanel() {
           {activeEngine ?? <span className="text-gray-400 italic">sin conexión</span>}
         </span>
         <span className="text-sm text-gray-700">
-          {activeTransaction ? (
+          {hasActiveTransactions ? (
             <>
-              <span className="font-semibold">{activeTransaction}</span> en curso
+              <span className="font-semibold">{activeTransactionCount}</span> transacción(es) activa(s)
             </>
           ) : (
             <span className="text-gray-400 italic">sin transacción activa</span>
@@ -59,17 +64,19 @@ export function EditorPanel() {
         </button>
         <button
           onClick={rollbackTransaction}
-          disabled={!activeTransaction || isExecuting}
+          disabled={!hasActiveTransactions || isExecuting}
           className="px-6 py-2 border-2 border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          title={hasActiveTransactions ? `Rollback ${activeTransactionCount} transaction(s)` : 'No active transactions'}
         >
-          ROLLBACK
+          ROLLBACK {hasActiveTransactions && `(${activeTransactionCount})`}
         </button>
         <button
           onClick={commitTransaction}
-          disabled={!activeTransaction || isExecuting}
+          disabled={!hasActiveTransactions || isExecuting}
           className="px-6 py-2 border-2 border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          title={hasActiveTransactions ? `Commit ${activeTransactionCount} transaction(s)` : 'No active transactions'}
         >
-          COMMIT
+          COMMIT {hasActiveTransactions && `(${activeTransactionCount})`}
         </button>
       </div>
     </div>

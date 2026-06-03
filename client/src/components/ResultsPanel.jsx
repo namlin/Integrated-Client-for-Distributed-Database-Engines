@@ -50,7 +50,7 @@ export function ResultsPanel() {
         {/* ── RESULTS ── */}
         {activeTab === 'Resultados' && (
           <div className="overflow-x-auto">
-            {resultsData.length === 0 ? (
+            {resultsColumns.length === 0 ? (
               <p className="text-gray-400 text-sm italic">No hay resultados aún. Ejecuta una consulta.</p>
             ) : (
               <table className="w-full text-sm">
@@ -64,15 +64,23 @@ export function ResultsPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {resultsData.map((row, idx) => (
-                    <tr key={idx} className="border-b border-gray-200 hover:bg-gray-50">
-                      {resultsColumns.map((col) => (
-                        <td key={col} className="px-4 py-2 text-gray-900">
-                          {row[col] === null ? <span className="text-gray-400">NULL</span> : String(row[col])}
-                        </td>
-                      ))}
+                  {resultsData.length === 0 ? (
+                    <tr>
+                      <td colSpan={resultsColumns.length} className="text-center py-6 text-gray-400 text-sm italic">
+                        No hay filas (tabla vacía)
+                      </td>
                     </tr>
-                  ))}
+                  ) : (
+                    resultsData.map((row, idx) => (
+                      <tr key={idx} className="border-b border-gray-200 hover:bg-gray-50">
+                        {resultsColumns.map((col) => (
+                          <td key={col} className="px-4 py-2 text-gray-900">
+                            {row[col] === null ? <span className="text-gray-400">NULL</span> : String(row[col])}
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             )}
@@ -135,6 +143,33 @@ export function ResultsPanel() {
         {/* ── RECOVERY ── */}
         {activeTab === 'Recuperación' && (
           <div className="space-y-4">
+            {/* Protocol Info */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <div className="flex gap-4 items-start">
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-blue-900 mb-2">Protocolo de recuperación activo:</p>
+                  <p className="text-lg font-bold text-blue-700 mb-3">{recoveryProtocol}</p>
+                  <p className="text-xs text-blue-800 leading-relaxed mb-2">
+                    {recoveryProtocol === 'Undo/Redo' && 
+                      'Este protocolo utiliza UNDO (deshacer cambios) para transacciones abortadas y REDO (rehacer cambios) para transacciones comprometidas que se perdieron durante un fallo.'
+                    }
+                    {recoveryProtocol === 'No-Undo/Redo' && 
+                      'Este protocolo utiliza solo REDO (rehacer cambios). Las escrituras se diferían hasta el commit, evitando la necesidad de UNDO.'
+                    }
+                    {recoveryProtocol === 'Undo/No-Redo' && 
+                      'Este protocolo utiliza solo UNDO (deshacer cambios). Las transacciones se escribían inmediatamente, pero los cambios no comprometidos se revierten.'
+                    }
+                    {recoveryProtocol === 'No-Undo/No-Redo' && 
+                      'Este protocolo no utiliza ni UNDO ni REDO. Las operaciones se bufferean hasta el commit y se aplican atómicamente.'
+                    }
+                  </p>
+                  <p className="text-xs text-blue-700 mt-2">
+                    <strong>Qué ocurrirá:</strong> Se analizará el registro de transacciones y se aplicarán las acciones de recuperación necesarias.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             {/* Run recovery on a past transaction */}
             <div className="flex gap-3 items-center">
               <span className="text-sm text-gray-700 font-medium">Ejecutar recuperación:</span>

@@ -127,6 +127,24 @@ export function DBClientProvider({ children }) {
     }
   };
 
+  const reconnectConnection = async (connectionId) => {
+    setIsLoadingConnection(true);
+    setConnectionError(null);
+    try {
+      const updated = await connectionAPI.reconnectConnection(connectionId);
+      setConnections((prev) => prev.map((c) => (c.id === connectionId ? updated : c)));
+      if (!activeConnectionId || activeConnectionId === connectionId) {
+        setActiveEngine(updated.name);
+        setActiveConnectionId(updated.id);
+      }
+      appendLog(`Reconnected to ${updated.name}`);
+    } catch (error) {
+      setConnectionError(error.message);
+    } finally {
+      setIsLoadingConnection(false);
+    }
+  };
+
   const deleteConnection = async (connectionId) => {
     setIsLoadingConnection(true);
     setConnectionError(null);
@@ -190,10 +208,15 @@ export function DBClientProvider({ children }) {
   // ── Transaction controls ──────────────────────────────────────────────────
 
   const commitTransaction = async () => {
-    if (!activeTransaction) return;
+    const activeTransactions = transactions.filter((txn) => txn.status === 'ACTIVE');
+    if (activeTransactions.length === 0) return;
+    
     try {
-      await transactionAPI.commitTransaction(activeTransaction);
-      appendLog(`Transaction ${activeTransaction} committed`);
+      // Commit all active transactions
+      for (const txn of activeTransactions) {
+        await transactionAPI.commitTransaction(txn.id);
+        appendLog(`Transaction ${txn.id} committed`);
+      }
       setActiveTransaction(null);
       await refreshTransactions();
       await refreshWal();
@@ -203,10 +226,15 @@ export function DBClientProvider({ children }) {
   };
 
   const rollbackTransaction = async () => {
-    if (!activeTransaction) return;
+    const activeTransactions = transactions.filter((txn) => txn.status === 'ACTIVE');
+    if (activeTransactions.length === 0) return;
+    
     try {
-      await transactionAPI.rollbackTransaction(activeTransaction);
-      appendLog(`Transaction ${activeTransaction} rolled back`);
+      // Rollback all active transactions
+      for (const txn of activeTransactions) {
+        await transactionAPI.rollbackTransaction(txn.id);
+        appendLog(`Transaction ${txn.id} rolled back`);
+      }
       setActiveTransaction(null);
       await refreshTransactions();
       await refreshWal();
@@ -256,7 +284,7 @@ export function DBClientProvider({ children }) {
     isLoadingConnection,
     connectionError,
     editingConnection, setEditingConnection,
-    addConnection, disconnectConnection, deleteConnection,
+    addConnection, disconnectConnection, reconnectConnection, deleteConnection,
 
     // Transaction state
     activeTransaction, setActiveTransaction,

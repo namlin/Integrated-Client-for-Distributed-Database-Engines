@@ -94,6 +94,44 @@ class DBManager:
                 'status': 'desconectado', 'color': 'gray',
                 'address': f"{row['host']}:{row['port']}", 'node': row['node'] or ''}
 
+    def reconnect_connection(self, conn_id: str, client_id: str) -> dict:
+        db = get_db_connection()
+        row = db.execute('SELECT * FROM connections WHERE id=?', (conn_id,)).fetchone()
+        if not row:
+            db.close()
+            raise ValueError(f"Connection {conn_id} not found")
+
+        engine = row['engine']
+        if engine not in ADAPTER_MAP:
+            db.close()
+            raise ValueError(f"Unsupported engine: {engine}")
+
+        # Build connection config from database row
+        config = {
+            'engine': engine,
+            'host': row['host'],
+            'port': row['port'],
+            'username': row['username'],
+            'password': row['password'],
+            'database': row['database_name'],
+            'name': row['name'],
+        }
+
+        # Create and test new adapter
+        adapter = ADAPTER_MAP[engine](config)
+        adapter.connect()
+
+        with self._lock:
+            self._adapters.setdefault(client_id, {})[conn_id] = adapter
+
+        db.execute("UPDATE connections SET status='connected' WHERE id=?", (conn_id,))
+        db.commit()
+        db.close()
+
+        return {'id': conn_id, 'name': row['name'], 'engine': engine,
+                'status': 'connected', 'color': 'green',
+                'address': f"{row['host']}:{row['port']}", 'node': row['node'] or ''}
+
     def delete_connection(self, conn_id: str, client_id: str) -> dict:
         with self._lock:
             client_adapters = self._adapters.get(client_id, {})

@@ -113,8 +113,10 @@ def mock_pg_adapter(monkeypatch):
                     table = match.group(1).lower()
                     where_clause = match.group(2)
                     rows = [dict(row) for row in self.tables.get(table, []) if _matches(row, where_clause)]
-                    return rows, len(rows)
-                return [{'id': 1, 'name': 'test'}], 1
+                    columns = list(rows[0].keys()) if rows else []
+                    return rows, len(rows), columns
+                default_row = {'id': 1, 'name': 'test'}
+                return [default_row], 1, list(default_row.keys())
 
             if upper.startswith('UPDATE'):
                 import re
@@ -133,8 +135,8 @@ def mock_pg_adapter(monkeypatch):
                         if _matches(row, where_clause):
                             row.update(updates)
                             affected += 1
-                    return [], affected
-                return [], 0
+                    return [], affected, []
+                return [], 0, []
 
             if upper.startswith('DELETE'):
                 import re
@@ -150,8 +152,8 @@ def mock_pg_adapter(monkeypatch):
                         else:
                             remaining.append(row)
                     self.tables[table] = remaining
-                    return [], affected
-                return [], 0
+                    return [], affected, []
+                return [], 0, []
 
             if upper.startswith('INSERT'):
                 import re
@@ -163,8 +165,8 @@ def mock_pg_adapter(monkeypatch):
                     values = [_parse_literal(value) for value in _split_csv(values_text)]
                     row = dict(zip(columns, values))
                     self.tables.setdefault(table, []).append(row)
-                    return [], 1
-                return [], 0
+                    return [], 1, []
+                return [], 0, []
 
         def fetch_before_image(self, table, where):
             rows = [dict(row) for row in self.tables.get(table, []) if _matches(row, where)]

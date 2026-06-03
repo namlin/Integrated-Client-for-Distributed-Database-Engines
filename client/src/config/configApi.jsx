@@ -30,6 +30,7 @@ export const connectionAPI = {
   getConnections: () => apiFetch('/connections', 'GET'),
   createConnection: (data) => apiFetch('/connections', 'POST', data),
   disconnectConnection: (id) => apiFetch(`/connections/${id}/disconnect`, 'PUT'),
+  reconnectConnection: (id) => apiFetch(`/connections/${id}/reconnect`, 'PUT'),
   deleteConnection: (id) => apiFetch(`/connections/${id}`, 'DELETE'),
 };
 

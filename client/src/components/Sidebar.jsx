@@ -37,6 +37,7 @@ export function Sidebar() {
     transactions,
     setShowConnectionModal,
     disconnectConnection,
+    reconnectConnection,
     deleteConnection,
     selectConnection,
     isLoadingConnection,
@@ -75,16 +76,29 @@ export function Sidebar() {
                   </div>
                 </button>
                 <div className="border-t border-gray-200 bg-gray-50 p-2 space-y-2">
-                  <button
-                    type="button"
-                    onClick={() => disconnectConnection(conn.id)}
-                    disabled={isLoadingConnection}
-                    className="w-full rounded-md bg-red-100 px-3 py-2 text-sm font-semibold text-red-700 transition-colors hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-50"
-                    title={`Desconectar ${conn.name}`}
-                    aria-label={`Desconectar ${conn.name}`}
-                  >
-                    Desconectar
-                  </button>
+                  {conn.status === 'connected' ? (
+                    <button
+                      type="button"
+                      onClick={() => disconnectConnection(conn.id)}
+                      disabled={isLoadingConnection}
+                      className="w-full rounded-md bg-red-100 px-3 py-2 text-sm font-semibold text-red-700 transition-colors hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-50"
+                      title={`Desconectar ${conn.name}`}
+                      aria-label={`Desconectar ${conn.name}`}
+                    >
+                      Desconectar
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => reconnectConnection(conn.id)}
+                      disabled={isLoadingConnection}
+                      className="w-full rounded-md bg-green-100 px-3 py-2 text-sm font-semibold text-green-700 transition-colors hover:bg-green-200 disabled:cursor-not-allowed disabled:opacity-50"
+                      title={`Reconectar ${conn.name}`}
+                      aria-label={`Reconectar ${conn.name}`}
+                    >
+                      Reconectar
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setPendingDeleteConnection(conn)}

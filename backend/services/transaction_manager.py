@@ -43,7 +43,7 @@ class TransactionManager:
                 adapter = operation.get('adapter')
                 query = operation.get('query')
                 if adapter and query:
-                    adapter.execute_query(query)
+                    adapter.execute_query(query)  # Returns (rows, count, columns), we ignore all
             self.pending_operations.pop(tid, None)
         wal_service.log_commit(tid, txn.get('engine_id', ''))
 

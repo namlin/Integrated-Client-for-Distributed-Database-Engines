@@ -37,7 +37,7 @@ class MongoDBAdapter(BaseAdapter):
         except Exception:
             return False
 
-    def execute_query(self, query: str) -> Tuple[List[Dict], int]:
+    def execute_query(self, query: str) -> Tuple[List[Dict], int, List[str]]:
         """
         Query format (JSON):
         {"collection": "name", "operation": "find|insertOne|updateOne|deleteOne|deleteMany",
@@ -60,11 +60,13 @@ class MongoDBAdapter(BaseAdapter):
             docs = list(col.find(cmd.get('filter', {})))
             for d in docs:
                 d['_id'] = str(d['_id'])
-            return docs, len(docs)
+            columns = list(docs[0].keys()) if docs else []
+            return docs, len(docs), columns
         
         if op == 'insertone':
             r = col.insert_one(cmd.get('document', {}))
-            return [{'inserted_id': str(r.inserted_id)}], 1
+            result = [{'inserted_id': str(r.inserted_id)}]
+            return result, 1, list(result[0].keys())
         
         # Capturar before_image para updateone:
         if op == 'updateone':
@@ -78,7 +80,8 @@ class MongoDBAdapter(BaseAdapter):
                 before_doc['_id'] = str(before_doc['_id'])
             result = [{'modified_count': r.modified_count, '_before': before_doc}] if before_doc else []
 
-            return result, r.modified_count
+            columns = list(result[0].keys()) if result else []
+            return result, r.modified_count, columns
         
         # Capturar before_image para deleteone:
         if op == 'deleteone':
@@ -91,7 +94,8 @@ class MongoDBAdapter(BaseAdapter):
                 before_doc['_id'] = str(before_doc['_id'])
             result = [{'deleted_count': r.deleted_count, '_before': before_doc}] if before_doc else []
 
-            return result, r.deleted_count
+            columns = list(result[0].keys()) if result else []
+            return result, r.deleted_count, columns
         
         # Capturar before_image para deletemany:
         if op == 'deletemany':
@@ -105,7 +109,8 @@ class MongoDBAdapter(BaseAdapter):
                     doc['_id'] = str(doc['_id'])
             result = [{'deleted_count': r.deleted_count, '_before': before_docs}] if before_docs else []
 
-            return result, r.deleted_count
+            columns = list(result[0].keys()) if result else []
+            return result, r.deleted_count, columns
         
         raise ValueError(f"Unknown MongoDB operation: {op}")
 

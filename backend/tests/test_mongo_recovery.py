@@ -46,7 +46,7 @@ def test_mongo_before_image_update(mongo_adapter):
         'update': {'$set': {'score': 95}}
     })
     
-    rows, affected = mongo_adapter.execute_query(query)
+    rows, affected, columns = mongo_adapter.execute_query(query)
     
     # Log a WAL (simulando lo que hace query_executor)
     before = rows[0].pop('_before') if rows and '_before' in rows[0] else None
@@ -87,7 +87,7 @@ def test_mongo_before_image_delete(mongo_adapter):
         'filter': {'_id': 'doc2'}
     })
     
-    rows, affected = mongo_adapter.execute_query(query)
+    rows, affected, columns = mongo_adapter.execute_query(query)
     before = rows[0].pop('_before') if rows and '_before' in rows[0] else None
     
     entry_id = wal_service.log_operation(
@@ -121,7 +121,7 @@ def test_mongo_undo_update_recovery(mongo_adapter):
         'update': {'$set': {'score': 100}}
     })
     
-    rows, affected = mongo_adapter.execute_query(query)
+    rows, affected, columns = mongo_adapter.execute_query(query)
     before = rows[0].pop('_before') if rows and '_before' in rows[0] else None
     
     entry_id = wal_service.log_operation(
@@ -157,7 +157,7 @@ def test_mongo_undo_delete_recovery(mongo_adapter):
         'filter': {'_id': 'doc4'}
     })
     
-    rows, affected = mongo_adapter.execute_query(query)
+    rows, affected, columns = mongo_adapter.execute_query(query)
     before = rows[0].pop('_before') if rows and '_before' in rows[0] else None
     
     entry_id = wal_service.log_operation(
@@ -194,7 +194,7 @@ def test_mongo_redo_committed_recovery(mongo_adapter):
         'update': {'$set': {'status': 'inactive'}}
     })
     
-    rows, affected = mongo_adapter.execute_query(query)
+    rows, affected, columns = mongo_adapter.execute_query(query)
     before = rows[0].pop('_before') if rows and '_before' in rows[0] else None
     
     entry_id = wal_service.log_operation(
@@ -231,9 +231,7 @@ def test_mongo_insert_recovery(mongo_adapter):
         'document': {'_id': 'doc6', 'name': 'Frank', 'inserted': True}
     })
     
-    rows, affected = mongo_adapter.execute_query(query)
-    
-    # Para INSERT, el after_image es el documento insertado
+    rows, affected, columns = mongo_adapter.execute_query(query)
     entry_id = wal_service.log_operation(
         tid=tid, operation='INSERT', table_name='test_collection',
         before_image=None, engine_id='mongo-conn-id', original_query=query,

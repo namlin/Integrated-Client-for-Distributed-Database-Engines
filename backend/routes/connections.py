@@ -32,6 +32,18 @@ def disconnect(conn_id: str, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put('/{conn_id}/reconnect', response_model=dict)
+def reconnect(conn_id: str, request: Request):
+    try:
+        return db_manager.reconnect_connection(conn_id, request.state.client_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ConnectionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete('/{conn_id}', response_model=dict)
 def delete_connection(conn_id: str, request: Request):
     try:

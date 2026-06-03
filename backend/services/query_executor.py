@@ -152,6 +152,8 @@ def _apply_query_to_rows(rows: List[Dict], query: str, qtype: str) -> List[Dict]
 
 
 def _project_pending_rows(rows: List[Dict], query: str, tid: Optional[str], protocol: str) -> List[Dict]:
+    # DEPRECATED: No longer used. SELECT queries always read from disk, not from pending operations.
+    # This function is kept for reference but is no longer called.
     if not tid or protocol not in ('No-Undo/No-Redo', 'No-Undo/Redo'):
         return rows
 
@@ -218,22 +220,36 @@ class QueryExecutor:
                       and not s.strip().startswith('--')]
 
         all_results: List[Dict] = []
+        all_columns: List[str] = []
         rows_affected = 0
         message_parts: List[str] = []
         current_tid = tid
 
         for stmt in statements:
-            res = self._exec_stmt(adapter, connection_id, stmt, protocol, current_tid, client_id)
+            qtype = _parse_type(stmt)
+            # For write operations without explicit TID, create independent transactions
+            # Don't carry over auto-started TID to next statement
+            stmt_tid = current_tid if current_tid else None
+            
+            res = self._exec_stmt(adapter, connection_id, stmt, protocol, stmt_tid, client_id)
             all_results.extend(res.get('results', []))
             rows_affected += res.get('rowsAffected', 0)
-            if res.get('tid'):
+            # Capture columns from the statement response
+            stmt_columns = res.get('columns', [])
+            if stmt_columns:
+                all_columns = stmt_columns
+            # Only carry over TID if it was explicitly passed in (not auto-started)
+            if res.get('tid') and current_tid:
+                current_tid = res['tid']
+            elif res.get('tid') and not current_tid and qtype == 'BEGIN':
+                # Only carry over BEGIN transactions
                 current_tid = res['tid']
             if res.get('message'):
                 message_parts.append(res['message'])
 
         return {
             'results': all_results,
-            'columns': list(all_results[0].keys()) if all_results else [],
+            'columns': all_columns,
             'rowsAffected': rows_affected,
             'txn_id': current_tid,
             'timestamp': _now(),
@@ -261,16 +277,16 @@ class QueryExecutor:
             return {'results': [], 'rowsAffected': 0, 'message': f'Transaction {tid} rolled back'}
 
         if qtype == 'SELECT':
-            rows, count = adapter.execute_query(query)
-            rows = _project_pending_rows(rows, query, tid, protocol)
-            return {'results': rows, 'rowsAffected': len(rows) if rows else count}
+            # SELECT always queries the disk, never considers pending operations
+            rows, count, columns = adapter.execute_query(query)
+            return {'results': rows, 'rowsAffected': len(rows) if rows else count, 'columns': columns}
 
         if qtype in ('INSERT', 'UPDATE', 'DELETE'):
             return self._exec_write(adapter, connection_id, query, qtype, tid, protocol, client_id)
 
         # SELECT and DDL:
-        rows, count = adapter.execute_query(query)
-        return {'results': rows, 'rowsAffected': count}
+        rows, count, columns = adapter.execute_query(query)
+        return {'results': rows, 'rowsAffected': count, 'columns': columns}
 
     def _exec_write(self, adapter: BaseAdapter, connection_id: str,
                     query: str, qtype: str, tid: Optional[str], protocol: str,
@@ -325,7 +341,7 @@ class QueryExecutor:
             after = None
         else:
             # STEAL: Execute immediately (Undo/* protocols):
-            rows, affected = adapter.execute_query(query)
+            rows, affected, _ = adapter.execute_query(query)
 
             if engine_type == 'MongoDBAdapter' and qtype in ('UPDATE', 'DELETE'):
                 if rows and isinstance(rows[0], dict) and '_before' in rows[0]:

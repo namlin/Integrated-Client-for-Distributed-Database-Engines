@@ -44,7 +44,7 @@ class RedisAdapter(BaseAdapter):
         except Exception:
             return False
 
-    def execute_query(self, query: str) -> Tuple[List[Dict], int]:
+    def execute_query(self, query: str) -> Tuple[List[Dict], int, List[str]]:
         """
         Query format (JSON):
         {"command": "GET|SET|DEL|KEYS|HSET|HGET|HGETALL", "key": "...", "value": "...", "field": "..."}
@@ -62,25 +62,29 @@ class RedisAdapter(BaseAdapter):
 
         if command == 'GET':
             val = self.connection.get(key)
-            return [{'key': key, 'value': val}], 1 if val is not None else 0
+            result = [{'key': key, 'value': val}]
+            return result, 1 if val is not None else 0, list(result[0].keys())
         if command == 'SET':
-            self.connection.set(key, value)
-            return [{'result': 'OK'}], 1
+            result = [{'result': 'OK'}]
+            return result, 1, list(result[0].keys())
         if command == 'DEL':
             n = self.connection.delete(key)
-            return [], n
+            return [], n, []
         if command == 'KEYS':
-            keys = self.connection.keys(key or '*')
-            return [{'key': k} for k in keys], len(keys)
+            results = [{'key': k} for k in self.connection.keys(key or '*')]
+            columns = list(results[0].keys()) if results else ['key']
+            return results, len(results), columns
         if command == 'HSET':
-            self.connection.hset(key, cmd.get('field'), value)
-            return [{'result': 'OK'}], 1
+            result = [{'result': 'OK'}]
+            return result, 1, list(result[0].keys())
         if command == 'HGET':
             val = self.connection.hget(key, cmd.get('field'))
-            return [{'key': key, 'field': cmd.get('field'), 'value': val}], 1
+            result = [{'key': key, 'field': cmd.get('field'), 'value': val}]
+            return result, 1, list(result[0].keys())
         if command == 'HGETALL':
             val = self.connection.hgetall(key)
-            return [{'key': key, **val}], 1
+            result = [{'key': key, **val}]
+            return result, 1, list(result[0].keys())
         raise ValueError(f"Unsupported Redis command: {command}")
 
     def fetch_before_image(self, table: str, where_clause: str) -> List[Dict]:
