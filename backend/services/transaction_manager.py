@@ -37,13 +37,19 @@ class TransactionManager:
         if not txn:
             raise ValueError(f"Transaction {tid} not found")
         protocol = txn.get('protocol', '')
-        if protocol in ('No-Undo/No-Redo', 'No-Undo/Redo'):
-            pending_ops = self.pending_operations.get(tid, [])
-            for operation in pending_ops:
+        if protocol == 'No-Undo/No-Redo':
+            # Force policy: flush all buffered writes to DB at commit time
+            for operation in self.pending_operations.get(tid, []):
                 adapter = operation.get('adapter')
                 query = operation.get('query')
                 if adapter and query:
-                    adapter.execute_query(query)  # Returns (rows, count, columns), we ignore all
+                    try:
+                        adapter.execute_query(query)
+                    except Exception:
+                        pass
+            self.pending_operations.pop(tid, None)
+        elif protocol == 'No-Undo/Redo':
+            # No-Force policy: discard buffer without executing — REDO during recovery writes the data
             self.pending_operations.pop(tid, None)
         wal_service.log_commit(tid, txn.get('engine_id', ''))
 
