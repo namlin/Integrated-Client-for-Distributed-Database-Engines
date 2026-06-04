@@ -280,7 +280,7 @@ export function DBClientProvider({ children }) {
       appendLog(`Failure simulated on ${result.tid}`);
       setActiveTransaction(null);
       await refreshTransactions();
-      setActiveTab('Consola');
+      await runRecovery(tid, recoveryProtocol);
     } catch (error) {
       appendLog(`SIMULATE FAILURE ERROR: ${error.message}`);
     }
@@ -310,7 +310,7 @@ export function DBClientProvider({ children }) {
         postCommitTimerRef.current = null;
       }
       await refreshTransactions();
-      setActiveTab('Consola');
+      await runRecovery(tid, recoveryProtocol);
     } catch (error) {
       appendLog(`POST-COMMIT FAILURE ERROR: ${error.message}`);
     }
