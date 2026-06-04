@@ -25,6 +25,8 @@ export function DBClientProvider({ children }) {
   const [transactions, setTransactions] = useState([]);
   const [resultsData, setResultsData] = useState([]);
   const [resultsColumns, setResultsColumns] = useState([]);
+  const [resultsMessage, setResultsMessage] = useState(null);
+  const [resultsMessageType, setResultsMessageType] = useState(null);
   const [walEntries, setWalEntries] = useState([]);
   const [consoleLog, setConsoleLog] = useState([]);
   const [recoveryResult, setRecoveryResult] = useState(null);
@@ -187,6 +189,8 @@ export function DBClientProvider({ children }) {
       );
       setResultsData(result.results || []);
       setResultsColumns(result.columns || []);
+      setResultsMessage(result.message || `Query OK — ${result.rowsAffected} row(s) affected`);
+      setResultsMessageType('success');
       if (result.txn_id) setActiveTransaction(result.txn_id);
       appendLog(
         result.message ||
@@ -197,6 +201,8 @@ export function DBClientProvider({ children }) {
       await refreshWal();
       await refreshHealth();
     } catch (error) {
+      setResultsMessage(error.message);
+      setResultsMessageType('error');
       setQueryError(error.message);
       appendLog(`ERROR: ${error.message}`);
       setActiveTab('Consola');
@@ -255,7 +261,7 @@ export function DBClientProvider({ children }) {
       appendLog(`Failure simulated on ${result.tid}`);
       setActiveTransaction(null);
       await refreshTransactions();
-      setActiveTab('Recuperación');
+      setActiveTab('Consola');
     } catch (error) {
       appendLog(`SIMULATE FAILURE ERROR: ${error.message}`);
     }
@@ -268,7 +274,7 @@ export function DBClientProvider({ children }) {
       appendLog(`Recovery (${result.protocol}) on ${tid}: ${result.after_state}`);
       await refreshTransactions();
       await refreshWal();
-      setActiveTab('Recuperación');
+      setActiveTab('Consola');
     } catch (error) {
       appendLog(`RECOVERY ERROR: ${error.message}`);
     }
@@ -295,6 +301,7 @@ export function DBClientProvider({ children }) {
     // Query state
     queryContent, setQueryContent,
     resultsData, resultsColumns,
+    resultsMessage, resultsMessageType,
     isExecuting, queryError,
     executeQuery,
 
