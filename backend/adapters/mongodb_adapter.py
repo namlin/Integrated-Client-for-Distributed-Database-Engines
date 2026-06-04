@@ -219,6 +219,32 @@ class MongoDBAdapter(BaseAdapter):
             bool: True si la operación fue exitosa
         """
         try:
+            from bson import ObjectId
+            
+            def convert_id(doc):
+                if isinstance(doc, dict):
+                    new_doc = {}
+                    for k, v in doc.items():
+                        if k == '_id' and isinstance(v, str) and len(v) == 24:
+                            try:
+                                new_doc[k] = ObjectId(v)
+                            except Exception:
+                                new_doc[k] = v
+                        elif isinstance(v, dict):
+                            new_doc[k] = convert_id(v)
+                        elif isinstance(v, list):
+                            new_doc[k] = [convert_id(x) for x in v]
+                        else:
+                            new_doc[k] = v
+                    return new_doc
+                return doc
+
+            filter_doc = convert_id(filter_doc)
+            if document:
+                document = convert_id(document)
+            if update_doc:
+                update_doc = convert_id(update_doc)
+
             col = self.connection[collection]
             
             if operation == 'insertOne':

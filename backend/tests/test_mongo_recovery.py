@@ -248,3 +248,65 @@ def test_mongo_insert_recovery(mongo_adapter):
     recovered_doc = col.find_one({'_id': 'doc6'})
     assert recovered_doc is None, "Inserted document should be deleted by UNDO"
     assert 'UNDO' in str(result['recovery_actions'])
+
+
+def test_mongo_active_rollback_undo_insert(mongo_adapter):
+    """Verifica que active rollback (_apply_undo) elimina un documento INSERT-ado."""
+    col = mongo_adapter.connection['test_collection']
+    
+    tid = transaction_manager.begin('mongo-conn-id', 'Undo/Redo')
+    
+    query = json.dumps({
+        'collection': 'test_collection',
+        'operation': 'insertOne',
+        'document': {'_id': 'doc_active_ins', 'name': 'George', 'val': 123}
+    })
+    
+    rows, affected, columns = mongo_adapter.execute_query(query)
+    
+    entry_id = wal_service.log_operation(
+        tid=tid, operation='INSERT', table_name='test_collection',
+        before_image=None, engine_id='mongo-conn-id', original_query=query,
+    )
+    wal_service.update_after_image(entry_id, {'_id': 'doc_active_ins', 'name': 'George', 'val': 123})
+    
+    # Exec rollback / _apply_undo
+    from services.query_executor import query_executor
+    query_executor._apply_undo(tid, mongo_adapter)
+    
+    # Verificar que el documento fue eliminado
+    recovered_doc = col.find_one({'_id': 'doc_active_ins'})
+    assert recovered_doc is None, "Inserted document should be deleted by active rollback"
+
+
+def test_mongo_active_rollback_undo_update(mongo_adapter):
+    """Verifica que active rollback (_apply_undo) restaura un UPDATE en Mongo."""
+    col = mongo_adapter.connection['test_collection']
+    col.insert_one({'_id': 'doc_active_upd', 'name': 'Helen', 'status': 'old'})
+    
+    tid = transaction_manager.begin('mongo-conn-id', 'Undo/Redo')
+    
+    query = json.dumps({
+        'collection': 'test_collection',
+        'operation': 'updateOne',
+        'filter': {'_id': 'doc_active_upd'},
+        'update': {'$set': {'status': 'new'}}
+    })
+    
+    rows, affected, columns = mongo_adapter.execute_query(query)
+    before = rows[0].pop('_before') if rows and '_before' in rows[0] else None
+    
+    entry_id = wal_service.log_operation(
+        tid=tid, operation='UPDATE', table_name='test_collection',
+        before_image=before, engine_id='mongo-conn-id', original_query=query,
+    )
+    wal_service.update_after_image(entry_id, {'_id': 'doc_active_upd', 'name': 'Helen', 'status': 'new'})
+    
+    # Exec rollback / _apply_undo
+    from services.query_executor import query_executor
+    query_executor._apply_undo(tid, mongo_adapter)
+    
+    # Verificar que se aplicó el undo del update
+    recovered_doc = col.find_one({'_id': 'doc_active_upd'})
+    assert recovered_doc is not None
+    assert recovered_doc['status'] == 'old', f"Status should be restored to 'old', got {recovered_doc['status']}"

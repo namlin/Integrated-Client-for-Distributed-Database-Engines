@@ -481,13 +481,29 @@ class QueryExecutor:
 
     def _apply_undo(self, tid: str, adapter: BaseAdapter):
         entries = wal_service.get_entries(tid=tid)
+        engine_type = adapter.__class__.__name__
         for entry in reversed(entries):
             if entry['op'] in ('INSERT', 'UPDATE', 'DELETE'):
-                sql = _build_undo(entry['op'], entry['tabla'], entry['before'], entry['after'])
-                if sql:
-                    try:
-                        adapter.execute_recovery_sql(sql)
-                    except Exception:
-                        pass
+                if engine_type == 'MongoDBAdapter':
+                    from services.recovery_service import _build_mongo_undo
+                    mongo_op = _build_mongo_undo(entry)
+                    if mongo_op:
+                        try:
+                            adapter.execute_mongo_recovery(
+                                mongo_op.get('operation'),
+                                mongo_op.get('collection'),
+                                mongo_op.get('filter', {}),
+                                mongo_op.get('document'),
+                                mongo_op.get('update'),
+                            )
+                        except Exception:
+                            pass
+                else:
+                    sql = _build_undo(entry['op'], entry['tabla'], entry['before'], entry['after'])
+                    if sql:
+                        try:
+                            adapter.execute_recovery_sql(sql)
+                        except Exception:
+                            pass
 
 query_executor = QueryExecutor()
