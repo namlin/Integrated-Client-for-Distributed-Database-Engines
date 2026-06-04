@@ -19,10 +19,30 @@ def _parse_type(query: str) -> str:
                'CREATE', 'DROP', 'ALTER'):
         if q.startswith(kw):
             return kw
+    try:
+        cmd = json.loads(query)
+        op = cmd.get('operation', '').upper()
+        if op == 'FIND':
+            return 'SELECT'
+        elif op == 'INSERTONE':
+            return 'INSERT'
+        elif op == 'UPDATEONE':
+            return 'UPDATE'
+        elif op in ('DELETEONE', 'DELETEMANY'):
+            return 'DELETE'
+    except Exception:
+        pass
     return 'UNKNOWN'
 
 
 def _extract_table(query: str) -> Optional[str]:
+    try:
+        cmd = json.loads(query)
+        if 'collection' in cmd:
+            return cmd['collection'].lower()
+    except Exception:
+        pass
+
     patterns = [
         r'INSERT\s+INTO\s+(\w+)',
         r'UPDATE\s+(\w+)',
@@ -37,6 +57,13 @@ def _extract_table(query: str) -> Optional[str]:
 
 
 def _extract_where(query: str) -> Optional[str]:
+    try:
+        cmd = json.loads(query)
+        if 'filter' in cmd:
+            return json.dumps(cmd['filter'])
+    except Exception:
+        pass
+
     m = re.search(r'\bWHERE\b\s+(.+?)(?:\s+ORDER\s+BY|\s+GROUP\s+BY|\s+LIMIT|;|$)',
                   query, re.IGNORECASE | re.DOTALL)
     return m.group(1).strip() if m else None
@@ -255,6 +282,7 @@ class QueryExecutor:
             'columns': all_columns,
             'rowsAffected': rows_affected,
             'txn_id': current_tid if current_tid else final_tid_override,
+            'auto_started': current_tid is None and final_tid_override is not None,
             'timestamp': _now(),
             'message': ' | '.join(message_parts) if message_parts else None,
         }
@@ -266,16 +294,28 @@ class QueryExecutor:
 
         if qtype == 'BEGIN':
             new_tid = transaction_manager.begin(connection_id, protocol, client_id)
+            try:
+                adapter.start_transaction()
+            except Exception:
+                pass
             return {'results': [], 'rowsAffected': 0, 'tid': new_tid, 'message': f'Transaction {new_tid} started'}
 
         if qtype == 'COMMIT':
             if tid:
                 transaction_manager.commit(tid, client_id)
+                try:
+                    adapter.commit_transaction()
+                except Exception:
+                    pass
             return {'results': [], 'rowsAffected': 0, 'message': f'Transaction {tid} committed'}
 
         if qtype == 'ROLLBACK':
             if tid:
                 transaction_manager.rollback(tid, client_id)
+                try:
+                    adapter.rollback_transaction()
+                except Exception:
+                    pass
                 self._apply_undo(tid, adapter)
             return {'results': [], 'rowsAffected': 0, 'message': f'Transaction {tid} rolled back'}
 
@@ -290,7 +330,10 @@ class QueryExecutor:
 
         # SELECT and DDL:
         rows, count, columns = adapter.execute_query(query)
-        return {'results': rows, 'rowsAffected': count, 'columns': columns}
+        message = None
+        if qtype in ('CREATE', 'DROP', 'ALTER'):
+            message = f"Query executed successfully: {qtype} command completed"
+        return {'results': rows, 'rowsAffected': count, 'columns': columns, 'message': message}
 
     def _exec_write(self, adapter: BaseAdapter, connection_id: str,
                     query: str, qtype: str, tid: Optional[str], protocol: str,
@@ -304,6 +347,10 @@ class QueryExecutor:
             try:
                 tid = transaction_manager.begin(connection_id, protocol, client_id)
                 auto_started = True
+                try:
+                    adapter.start_transaction()
+                except Exception:
+                    pass
             except Exception:
                 tid = None
 
@@ -336,21 +383,41 @@ class QueryExecutor:
             rows = []
             affected = 0
 
-            # Compute after-image from the parsed query so the WAL has the
-            # information needed for REDO during recovery.
-            if qtype == 'INSERT':
-                parsed = _parse_insert_row(query)
-                if parsed:
-                    after = parsed
-            elif qtype == 'UPDATE' and before:
-                _, assignments = _parse_update_assignments(query)
-                if assignments:
-                    merged = dict(before) if isinstance(before, dict) else dict(before[0]) if before else {}
-                    merged.update(assignments)
-                    after = merged
-            elif qtype == 'DELETE':
-                # For DELETE the before-image is sufficient; after is empty
-                after = None
+            # Compute before & after-image for MongoDB No-Steal
+            if engine_type == 'MongoDBAdapter':
+                try:
+                    cmd = json.loads(query)
+                    if qtype == 'INSERT':
+                        after = cmd.get('document', {})
+                    elif qtype == 'UPDATE':
+                        before_docs = adapter.fetch_before_image(table, where)
+                        if before_docs:
+                            before = before_docs[0] if len(before_docs) == 1 else before_docs
+                            update_op = cmd.get('update', {})
+                            doc = dict(before) if isinstance(before, dict) else dict(before[0]) if before else {}
+                            if '$set' in update_op:
+                                doc.update(update_op['$set'])
+                            after = doc
+                    elif qtype == 'DELETE':
+                        before_docs = adapter.fetch_before_image(table, where)
+                        if before_docs:
+                            before = before_docs[0] if len(before_docs) == 1 else before_docs
+                except Exception:
+                    pass
+            else:
+                # Compute after-image from the parsed SQL query
+                if qtype == 'INSERT':
+                    parsed = _parse_insert_row(query)
+                    if parsed:
+                        after = parsed
+                elif qtype == 'UPDATE' and before:
+                    _, assignments = _parse_update_assignments(query)
+                    if assignments:
+                        merged = dict(before) if isinstance(before, dict) else dict(before[0]) if before else {}
+                        merged.update(assignments)
+                        after = merged
+                elif qtype == 'DELETE':
+                    after = None
         else:
             # STEAL: Execute immediately (Undo/* protocols):
             rows, affected, _ = adapter.execute_query(query)
@@ -364,27 +431,40 @@ class QueryExecutor:
             # Capturar after-image:
             if rows:
                 after = rows[0] if len(rows) == 1 else rows
-            elif qtype == 'INSERT' and table:
-                try:
-                    post = adapter.fetch_before_image(table, None)
-                    if post:
-                        after = post[-1]
-                except Exception:
-                    pass
+
+            if engine_type == 'MongoDBAdapter':
+                if qtype == 'UPDATE' and table and where:
+                    try:
+                        updated_docs = adapter.fetch_before_image(table, where)
+                        if updated_docs:
+                            after = updated_docs[0] if len(updated_docs) == 1 else updated_docs
+                    except Exception:
+                        pass
+                elif qtype == 'INSERT' and table and rows:
+                    inserted_id = rows[0].get('inserted_id')
+                    if inserted_id:
+                        try:
+                            docs = adapter.fetch_before_image(table, json.dumps({'_id': inserted_id}))
+                            if docs:
+                                after = docs[0]
+                        except Exception:
+                            pass
+            else:
+                if qtype == 'INSERT' and table:
+                    try:
+                        post = adapter.fetch_before_image(table, None)
+                        if post:
+                            after = post[-1]
+                    except Exception:
+                        pass
 
         # Log to WAL (single entry per operation):
         entry_id = None
         if tid:
-            if engine_type == 'MongoDBAdapter':
-                entry_id = wal_service.log_operation(
-                    tid=tid, operation=qtype, table_name=table,
-                    before_image=before, engine_id=connection_id, original_query=query,
-                )
-            else:
-                entry_id = wal_service.log_operation(
-                    tid=tid, operation=qtype, table_name=table,
-                    before_image=before, engine_id=connection_id, original_query=query,
-                )
+            entry_id = wal_service.log_operation(
+                tid=tid, operation=qtype, table_name=table,
+                before_image=before, engine_id=connection_id, original_query=query,
+            )
             if entry_id and after:
                 wal_service.update_after_image(entry_id, after)
 
@@ -394,6 +474,7 @@ class QueryExecutor:
             result['tid'] = tid
             if auto_started:
                 result['message'] = f'Transaction {tid} auto-started'
+                result['auto_started'] = True
             if is_no_steal:
                 result['message'] = f'Operation buffered (No-Steal policy). Will execute on COMMIT.'
         return result

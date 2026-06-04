@@ -3,6 +3,10 @@ from typing import Dict, List, Tuple, Optional
 from .base_adapter import BaseAdapter
 
 class MongoDBAdapter(BaseAdapter):
+    def __init__(self, config: dict):
+        super().__init__(config)
+        self.session = None
+
     def connect(self) -> bool:
         try:
             from pymongo import MongoClient
@@ -20,6 +24,12 @@ class MongoDBAdapter(BaseAdapter):
             raise ConnectionError(f"MongoDB connection failed: {e}")
 
     def disconnect(self):
+        if hasattr(self, 'session') and self.session:
+            try:
+                self.session.end_session()
+            except Exception:
+                pass
+            self.session = None
         if hasattr(self, 'client') and self.client:
             try:
                 self.client.close()
@@ -56,15 +66,17 @@ class MongoDBAdapter(BaseAdapter):
         op = cmd.get('operation', 'find').lower()
         col = self.connection[col_name]
 
+        session = self.session if (hasattr(self, 'session') and self.session) else None
+
         if op == 'find':
-            docs = list(col.find(cmd.get('filter', {})))
+            docs = list(col.find(cmd.get('filter', {}), session=session))
             for d in docs:
                 d['_id'] = str(d['_id'])
             columns = list(docs[0].keys()) if docs else []
             return docs, len(docs), columns
         
         if op == 'insertone':
-            r = col.insert_one(cmd.get('document', {}))
+            r = col.insert_one(cmd.get('document', {}), session=session)
             result = [{'inserted_id': str(r.inserted_id)}]
             return result, 1, list(result[0].keys())
         
@@ -72,8 +84,8 @@ class MongoDBAdapter(BaseAdapter):
         if op == 'updateone':
             filter_doc = cmd.get('filter', {})
             update_doc = cmd.get('update', {})
-            before_doc = col.find_one(filter_doc)
-            r = col.update_one(filter_doc, update_doc)
+            before_doc = col.find_one(filter_doc, session=session)
+            r = col.update_one(filter_doc, update_doc, session=session)
 
             # Normalizar _id a string y retornar en metadata para el WAL:
             if before_doc and '_id' in before_doc:
@@ -86,8 +98,8 @@ class MongoDBAdapter(BaseAdapter):
         # Capturar before_image para deleteone:
         if op == 'deleteone':
             filter_doc = cmd.get('filter', {})
-            before_doc = col.find_one(filter_doc)
-            r = col.delete_one(filter_doc)
+            before_doc = col.find_one(filter_doc, session=session)
+            r = col.delete_one(filter_doc, session=session)
 
             # Normalizar _id a string y retornar en metadata para el WAL:
             if before_doc and '_id' in before_doc:
@@ -100,8 +112,8 @@ class MongoDBAdapter(BaseAdapter):
         # Capturar before_image para deletemany:
         if op == 'deletemany':
             filter_doc = cmd.get('filter', {})
-            before_docs = list(col.find(filter_doc))
-            r = col.delete_many(filter_doc)
+            before_docs = list(col.find(filter_doc, session=session))
+            r = col.delete_many(filter_doc, session=session)
 
             # Normalizar _id a string en todos los docs:
             for doc in before_docs:
@@ -118,12 +130,69 @@ class MongoDBAdapter(BaseAdapter):
         try:
             col = self.connection[table]
             f = json.loads(where_clause) if where_clause else {}
-            docs = list(col.find(f))
+            if '_id' in f and isinstance(f['_id'], str) and len(f['_id']) == 24:
+                docs = list(col.find(f))
+                if not docs:
+                    from bson import ObjectId
+                    try:
+                        f_copy = dict(f)
+                        f_copy['_id'] = ObjectId(f['_id'])
+                        docs = list(col.find(f_copy))
+                    except Exception:
+                        pass
+            else:
+                docs = list(col.find(f))
             for d in docs:
                 d['_id'] = str(d['_id'])
             return docs
         except Exception:
             return []
+
+    def start_transaction(self) -> bool:
+        if self.connection is not None and hasattr(self, 'client') and self.client:
+            try:
+                res = self.client.admin.command('isMaster')
+                is_replica_set = 'setName' in res or res.get('msg') == 'isdbgrid'
+                if not is_replica_set:
+                    self.session = None
+                    return False
+
+                if self.session:
+                    try:
+                        self.session.end_session()
+                    except Exception:
+                        pass
+                self.session = self.client.start_session()
+                self.session.start_transaction()
+                return True
+            except Exception:
+                self.session = None
+                pass
+        return False
+
+    def commit_transaction(self) -> bool:
+        if hasattr(self, 'session') and self.session:
+            try:
+                self.session.commit_transaction()
+                return True
+            except Exception:
+                raise
+            finally:
+                self.session.end_session()
+                self.session = None
+        return False
+
+    def rollback_transaction(self) -> bool:
+        if hasattr(self, 'session') and self.session:
+            try:
+                self.session.abort_transaction()
+                return True
+            except Exception:
+                raise
+            finally:
+                self.session.end_session()
+                self.session = None
+        return False
 
     def execute_recovery_sql(self, sql: str) -> bool:
         """Fallback para SQL. No debería usarse para Mongo recovery."""

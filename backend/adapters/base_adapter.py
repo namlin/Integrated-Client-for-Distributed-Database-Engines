@@ -34,3 +34,12 @@ class BaseAdapter(ABC):
 
     def is_connected(self) -> bool:
         return self.connection is not None
+
+    def start_transaction(self) -> bool:
+        return True
+
+    def commit_transaction(self) -> bool:
+        return True
+
+    def rollback_transaction(self) -> bool:
+        return True

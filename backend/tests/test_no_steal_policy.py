@@ -105,6 +105,7 @@ def test_no_steal_auto_starts_transaction_for_write(client, mock_pg_adapter):
         assert r1.status_code == 200
         payload = r1.json()
         assert payload['txn_id'] is not None
+        assert payload['auto_started'] is True
         assert payload['txn_id'] in transaction_manager.pending_operations
         assert len(transaction_manager.pending_operations[payload['txn_id']]) > 0
     finally:

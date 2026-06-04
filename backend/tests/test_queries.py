@@ -52,6 +52,28 @@ def test_execute_with_begin(client, mock_pg_adapter):
     client.delete(f'/api/connections/{conn_id}')
 
 
+def test_execute_ddl(client, mock_pg_adapter):
+    r = client.post('/api/connections', json={
+        'name': 'DDL Test', 'engine': 'PostgreSQL',
+        'host': 'localhost', 'port': 5432,
+        'username': 'u', 'password': 'p', 'database': 'd'
+    })
+    conn_id = r.json()['id']
+
+    r2 = client.post('/api/queries/execute', json={
+        'connectionId': conn_id,
+        'query': 'ALTER TABLE students DROP COLUMN prueba',
+        'protocol': 'Undo/Redo',
+    })
+    assert r2.status_code == 200
+    data = r2.json()
+    assert 'results' in data
+    assert 'columns' in data
+    assert data['message'] == "Query executed successfully: ALTER command completed"
+
+    client.delete(f'/api/connections/{conn_id}')
+
+
 def test_health(client):
     r = client.get('/api/health')
     assert r.status_code == 200

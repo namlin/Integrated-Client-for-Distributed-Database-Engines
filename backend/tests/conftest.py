@@ -168,6 +168,8 @@ def mock_pg_adapter(monkeypatch):
                     return [], 1, []
                 return [], 0, []
 
+            return [], 0, []
+
         def fetch_before_image(self, table, where):
             rows = [dict(row) for row in self.tables.get(table, []) if _matches(row, where)]
             return rows

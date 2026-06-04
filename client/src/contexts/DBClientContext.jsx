@@ -195,7 +195,15 @@ export function DBClientProvider({ children }) {
       setResultsColumns(result.columns || []);
       setResultsMessage(result.message || `Query OK — ${result.rowsAffected} row(s) affected`);
       setResultsMessageType('success');
-      if (result.txn_id) setActiveTransaction(result.txn_id);
+      if (result.txn_id) {
+        if (result.auto_started) {
+          setActiveTransaction(null);
+        } else {
+          setActiveTransaction(result.txn_id);
+        }
+      } else {
+        setActiveTransaction(null);
+      }
       appendLog(
         result.message ||
           `Query OK — ${result.rowsAffected} row(s) affected`
