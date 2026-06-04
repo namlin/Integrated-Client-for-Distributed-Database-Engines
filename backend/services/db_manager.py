@@ -170,7 +170,40 @@ class DBManager:
 
     def get_adapter(self, conn_id: str, client_id: str) -> Optional[BaseAdapter]:
         with self._lock:
-            return self._adapters.get(client_id, {}).get(conn_id)
+            adapter = self._adapters.get(client_id, {}).get(conn_id)
+            if adapter:
+                return adapter
+
+        # If the adapter is not in memory (e.g. after backend reload/restart),
+        # retrieve configuration from sqlite and auto-reconnect
+        db = get_db_connection()
+        row = db.execute('SELECT * FROM connections WHERE id=?', (conn_id,)).fetchone()
+        db.close()
+        if not row:
+            return None
+
+        engine = row['engine']
+        if engine not in ADAPTER_MAP:
+            return None
+
+        config = {
+            'engine': engine,
+            'host': row['host'],
+            'port': row['port'],
+            'username': row['username'],
+            'password': row['password'],
+            'database': row['database_name'],
+            'name': row['name'],
+        }
+
+        try:
+            adapter = ADAPTER_MAP[engine](config)
+            adapter.connect()
+            with self._lock:
+                self._adapters.setdefault(client_id, {})[conn_id] = adapter
+            return adapter
+        except Exception:
+            return None
 
     def find_connection_id_by_name(self, name: str, client_id: str) -> Optional[str]:
         client_ids = self._client_conn_ids(client_id)

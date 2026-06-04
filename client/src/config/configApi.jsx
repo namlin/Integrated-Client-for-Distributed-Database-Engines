@@ -62,6 +62,7 @@ export const walAPI = {
 
 export const recoveryAPI = {
   simulateFailure: (tid) => apiFetch(`/recovery/simulate-failure/${tid}`, 'POST'),
+  simulatePostCommitFailure: (tid) => apiFetch(`/recovery/simulate-post-commit-failure/${tid}`, 'POST'),
   runRecovery: (tid, protocol) => apiFetch(`/recovery/run/${tid}`, 'POST', { protocol }),
   getRecoveryStatus: (tid) => apiFetch(`/recovery/status/${tid}`, 'GET'),
 };

@@ -153,8 +153,10 @@ class RecoveryService:
         txn = transaction_manager.get_transaction(tid)
         if not txn:
             raise ValueError(f"Transaction {tid} not found")
-        transaction_manager.mark_failed(tid)
+        # Log the ABORT entry first, then force FAILED status so it isn't
+        # overwritten back to ABORTED by log_abort.
         wal_service.log_abort(tid, txn.get('engine_id', ''))
+        transaction_manager.mark_failed(tid)
         return {'tid': tid, 'status': 'FAILED',
                 'message': f'Transaction {tid} marked as FAILED (crash simulated)'}
 
@@ -271,6 +273,62 @@ class RecoveryService:
         return {'tid': tid, 'protocol': protocol, 'status': 'completed',
                 'recovery_actions': actions, 'before_state': before_state,
                 'after_state': after_state}
+
+    def simulate_post_commit_failure(self, tid: str,
+                                      adapter: Optional[BaseAdapter] = None) -> dict:
+        """Simulate a crash after commit but before data pages are flushed.
+
+        This reverses the actual DB changes (as if the data pages were lost)
+        while keeping the WAL and COMMITTED status intact, so that running
+        recovery will demonstrate REDO behaviour.
+        """
+        txn = transaction_manager.get_transaction(tid)
+        if not txn:
+            raise ValueError(f"Transaction {tid} not found")
+        if txn['status'] != 'COMMITTED':
+            raise ValueError(
+                f"Transaction {tid} is not committed (status: {txn['status']})")
+
+        entries = wal_service.get_entries(tid=tid)
+        writes = [e for e in entries if e['op'] in ('INSERT', 'UPDATE', 'DELETE')]
+
+        engine_type = adapter.__class__.__name__ if adapter else 'Unknown'
+        reversed_count = 0
+
+        # Reverse DB changes in reverse order (undo the writes)
+        for e in reversed(writes):
+            if engine_type == 'MongoDBAdapter':
+                mongo_op = _build_mongo_undo(e)
+                if mongo_op and adapter:
+                    try:
+                        adapter.execute_mongo_recovery(
+                            mongo_op.get('operation'),
+                            mongo_op.get('collection'),
+                            mongo_op.get('filter', {}),
+                            mongo_op.get('document'),
+                            mongo_op.get('update'),
+                        )
+                        reversed_count += 1
+                    except Exception:
+                        pass
+            else:
+                sql = _build_undo(e)
+                if sql and adapter:
+                    try:
+                        ok = adapter.execute_recovery_sql(sql)
+                        if ok:
+                            reversed_count += 1
+                    except Exception:
+                        pass
+
+        return {
+            'tid': tid,
+            'status': 'POST_COMMIT_FAILURE',
+            'reversed_operations': reversed_count,
+            'message': (f'Post-commit failure simulated on {tid}. '
+                        f'{reversed_count} data page(s) reversed. '
+                        f'Run recovery to REDO.'),
+        }
 
     def _try_exec_mongo(self, adapter: Optional[BaseAdapter], mongo_op: Dict, actions: List[str]):
         """Ejecuta una operación de recuperación Mongo-native."""

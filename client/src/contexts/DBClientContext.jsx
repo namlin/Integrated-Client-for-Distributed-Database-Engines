@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useState, useEffect, useCallback, useRef } from 'react';
 import {
   connectionAPI,
   queryAPI,
@@ -39,6 +39,10 @@ export function DBClientProvider({ children }) {
 
   const [isExecuting, setIsExecuting] = useState(false);
   const [queryError, setQueryError] = useState(null);
+
+  // Post-commit failure window: list of TIDs just committed
+  const [postCommitTids, setPostCommitTids] = useState([]);
+  const postCommitTimerRef = useRef(null);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -218,14 +222,27 @@ export function DBClientProvider({ children }) {
     if (activeTransactions.length === 0) return;
     
     try {
+      const committedIds = [];
       // Commit all active transactions
       for (const txn of activeTransactions) {
         await transactionAPI.commitTransaction(txn.id);
         appendLog(`Transaction ${txn.id} committed`);
+        committedIds.push(txn.id);
       }
       setActiveTransaction(null);
       await refreshTransactions();
       await refreshWal();
+
+      // Open post-commit failure window
+      if (committedIds.length > 0) {
+        setPostCommitTids(committedIds);
+        // Auto-dismiss after 15 seconds
+        if (postCommitTimerRef.current) clearTimeout(postCommitTimerRef.current);
+        postCommitTimerRef.current = setTimeout(() => {
+          setPostCommitTids([]);
+          postCommitTimerRef.current = null;
+        }, 15000);
+      }
     } catch (error) {
       appendLog(`COMMIT ERROR: ${error.message}`);
     }
@@ -252,12 +269,14 @@ export function DBClientProvider({ children }) {
   // ── Recovery ──────────────────────────────────────────────────────────────
 
   const simulateFailure = async () => {
-    if (!activeTransaction) {
+    // Use activeTransaction if set, otherwise pick the first ACTIVE from the DB list
+    const tid = activeTransaction || transactions.find((t) => t.status === 'ACTIVE')?.id;
+    if (!tid) {
       appendLog('No active transaction to simulate failure on.');
       return;
     }
     try {
-      const result = await recoveryAPI.simulateFailure(activeTransaction);
+      const result = await recoveryAPI.simulateFailure(tid);
       appendLog(`Failure simulated on ${result.tid}`);
       setActiveTransaction(null);
       await refreshTransactions();
@@ -277,6 +296,31 @@ export function DBClientProvider({ children }) {
       setActiveTab('Consola');
     } catch (error) {
       appendLog(`RECOVERY ERROR: ${error.message}`);
+    }
+  };
+
+  const simulatePostCommitFailure = async (tid) => {
+    try {
+      const result = await recoveryAPI.simulatePostCommitFailure(tid);
+      appendLog(`Post-commit failure simulated on ${tid}: ${result.message}`);
+      // Close the notification
+      setPostCommitTids((prev) => prev.filter((id) => id !== tid));
+      if (postCommitTimerRef.current) {
+        clearTimeout(postCommitTimerRef.current);
+        postCommitTimerRef.current = null;
+      }
+      await refreshTransactions();
+      setActiveTab('Consola');
+    } catch (error) {
+      appendLog(`POST-COMMIT FAILURE ERROR: ${error.message}`);
+    }
+  };
+
+  const dismissPostCommitWindow = () => {
+    setPostCommitTids([]);
+    if (postCommitTimerRef.current) {
+      clearTimeout(postCommitTimerRef.current);
+      postCommitTimerRef.current = null;
     }
   };
 
@@ -312,6 +356,9 @@ export function DBClientProvider({ children }) {
     recoveryResult,
     simulateFailure,
     runRecovery,
+    postCommitTids,
+    simulatePostCommitFailure,
+    dismissPostCommitWindow,
 
     // UI
     activeTab, setActiveTab,

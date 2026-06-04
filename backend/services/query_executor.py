@@ -224,6 +224,7 @@ class QueryExecutor:
         rows_affected = 0
         message_parts: List[str] = []
         current_tid = tid
+        final_tid_override = None
 
         for stmt in statements:
             qtype = _parse_type(stmt)
@@ -238,12 +239,14 @@ class QueryExecutor:
             stmt_columns = res.get('columns', [])
             if stmt_columns:
                 all_columns = stmt_columns
-            # Only carry over TID if it was explicitly passed in (not auto-started)
-            if res.get('tid') and current_tid:
-                current_tid = res['tid']
-            elif res.get('tid') and not current_tid and qtype == 'BEGIN':
-                # Only carry over BEGIN transactions
-                current_tid = res['tid']
+            
+            # Track any auto-started or explicitly started transaction ID to return to client
+            res_tid = res.get('tid')
+            if res_tid:
+                if current_tid or qtype == 'BEGIN':
+                    current_tid = res_tid
+                else:
+                    final_tid_override = res_tid
             if res.get('message'):
                 message_parts.append(res['message'])
 
@@ -251,7 +254,7 @@ class QueryExecutor:
             'results': all_results,
             'columns': all_columns,
             'rowsAffected': rows_affected,
-            'txn_id': current_tid,
+            'txn_id': current_tid if current_tid else final_tid_override,
             'timestamp': _now(),
             'message': ' | '.join(message_parts) if message_parts else None,
         }
@@ -277,8 +280,9 @@ class QueryExecutor:
             return {'results': [], 'rowsAffected': 0, 'message': f'Transaction {tid} rolled back'}
 
         if qtype == 'SELECT':
-            # SELECT always queries the disk, never considers pending operations
+            # SELECT queries disk, then projects pending operations for this transaction (read your own writes)
             rows, count, columns = adapter.execute_query(query)
+            rows = _project_pending_rows(rows, query, tid, protocol)
             return {'results': rows, 'rowsAffected': len(rows) if rows else count, 'columns': columns}
 
         if qtype in ('INSERT', 'UPDATE', 'DELETE'):
@@ -315,17 +319,10 @@ class QueryExecutor:
             except Exception:
                 pass
 
-        # Write WAL entry BEFORE executing:
-        entry_id = None
-        if tid and engine_type != 'MongoDBAdapter':
-            entry_id = wal_service.log_operation(
-                tid=tid, operation=qtype, table_name=table,
-                before_image=before, engine_id=connection_id, original_query=query,
-            )
-
         # Check if this transaction uses No-Steal policy (No-Undo protocols)
         is_no_steal = protocol in ('No-Undo/No-Redo', 'No-Undo/Redo')
-        
+        after = None
+
         if is_no_steal:
             # NO-STEAL: Buffer the operation, don't execute immediately:
             if tid not in transaction_manager.pending_operations:
@@ -338,7 +335,22 @@ class QueryExecutor:
             })
             rows = []
             affected = 0
-            after = None
+
+            # Compute after-image from the parsed query so the WAL has the
+            # information needed for REDO during recovery.
+            if qtype == 'INSERT':
+                parsed = _parse_insert_row(query)
+                if parsed:
+                    after = parsed
+            elif qtype == 'UPDATE' and before:
+                _, assignments = _parse_update_assignments(query)
+                if assignments:
+                    merged = dict(before) if isinstance(before, dict) else dict(before[0]) if before else {}
+                    merged.update(assignments)
+                    after = merged
+            elif qtype == 'DELETE':
+                # For DELETE the before-image is sufficient; after is empty
+                after = None
         else:
             # STEAL: Execute immediately (Undo/* protocols):
             rows, affected, _ = adapter.execute_query(query)
@@ -350,7 +362,6 @@ class QueryExecutor:
                         before = before_raw if isinstance(before_raw, list) else [before_raw]
 
             # Capturar after-image:
-            after = None
             if rows:
                 after = rows[0] if len(rows) == 1 else rows
             elif qtype == 'INSERT' and table:
@@ -361,12 +372,19 @@ class QueryExecutor:
                 except Exception:
                     pass
 
-        # Log a WAL:
+        # Log to WAL (single entry per operation):
+        entry_id = None
         if tid:
-            entry_id = wal_service.log_operation(
-                tid=tid, operation=qtype, table_name=table,
-                before_image=before, engine_id=connection_id, original_query=query,
-            )
+            if engine_type == 'MongoDBAdapter':
+                entry_id = wal_service.log_operation(
+                    tid=tid, operation=qtype, table_name=table,
+                    before_image=before, engine_id=connection_id, original_query=query,
+                )
+            else:
+                entry_id = wal_service.log_operation(
+                    tid=tid, operation=qtype, table_name=table,
+                    before_image=before, engine_id=connection_id, original_query=query,
+                )
             if entry_id and after:
                 wal_service.update_after_image(entry_id, after)
 

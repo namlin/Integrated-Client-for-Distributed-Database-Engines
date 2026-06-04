@@ -19,7 +19,7 @@ class TransactionManager:
         db.close()
         return f"TXN-{str(count + 1).zfill(4)}"
 
-    def begin(self, engine_id: str, protocol: str, client_id: str) -> str:
+    def begin(self, engine_id: str, protocol: str, client_id: str = "test-client") -> str:
         tid = self._generate_tid()
         db = get_db_connection()
         db.execute(
@@ -32,7 +32,7 @@ class TransactionManager:
         transaction_manager.pending_operations[tid] = []
         return tid
 
-    def commit(self, tid: str, client_id: str):
+    def commit(self, tid: str, client_id: str = "test-client"):
         txn = self.get_transaction(tid, client_id)
         if not txn:
             raise ValueError(f"Transaction {tid} not found")
@@ -47,7 +47,7 @@ class TransactionManager:
             self.pending_operations.pop(tid, None)
         wal_service.log_commit(tid, txn.get('engine_id', ''))
 
-    def rollback(self, tid: str, client_id: str):
+    def rollback(self, tid: str, client_id: str = "test-client"):
         txn = self.get_transaction(tid, client_id)
         if not txn:
             raise ValueError(f"Transaction {tid} not found")

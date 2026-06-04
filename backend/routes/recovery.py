@@ -22,6 +22,27 @@ def simulate_failure(tid: str, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post('/simulate-post-commit-failure/{tid}', response_model=dict)
+def simulate_post_commit_failure(tid: str, request: Request):
+    try:
+        txn = transaction_manager.get_transaction(tid, request.state.client_id)
+        if not txn:
+            raise HTTPException(status_code=404, detail=f'Transaction {tid} not found')
+
+        adapter = None
+        engine_id = txn.get('engine_id')
+        if engine_id:
+            adapter = db_manager.get_adapter(engine_id, request.state.client_id)
+
+        return recovery_service.simulate_post_commit_failure(tid, adapter)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post('/run/{tid}', response_model=dict)
 def run_recovery(tid: str, payload: RecoveryRequest, request: Request):
     try:
